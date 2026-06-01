@@ -90,6 +90,11 @@ public final class LBForth {
     /// Optional callback fired when BYE is executed. Useful for the host to quit cleanly.
     public var onQuitRequested: (() -> Void)?
 
+    /// True when a KEY primitive is blocked waiting for the next character from the host console.
+    /// The ConsoleView uses this to route the next typed character to provideKey(_:) instead of
+    /// normal line interpretation.
+    public var waitingForKey = false
+
     // Primitive dispatch table: ID -> implementation
     private var primitives: [(() -> Void)?] = []
 
@@ -318,6 +323,31 @@ public final class LBForth {
             let depth = Int(spGet() - 1)
             tell("[DEBUG] state=\(stateStr)  stack=<\(depth)> \(stackAsString)\n")
         }
+    }
+
+    /// Called by the host UI (ConsoleView) when the user types a character while
+    /// a KEY is waiting (waitingForKey == true). This supplies the character to the
+    /// pending KEY and resumes interpretation (outer or threaded) from the suspension point.
+    public func provideKey(_ char: Int) {
+        if !waitingForKey { return }
+        waitingForKey = false
+
+        // Provide the value as if the KEY primitive itself had pushed it.
+        push(char)
+
+        // Resume execution.
+        // - If we were inside a colon definition (return stack has frames), re-enter
+        //   innerThread. Because we rewound ip in innerThread on suspend, we must now
+        //   advance past the KEY cell (we have already injected the value via push).
+        //   This avoids re-executing the KEY primitive.
+        if returnStackPointer > 1 {
+            ip += 8
+            innerThread()
+        }
+        // In all cases (top-level KEY or after a colon def), give the outer interpreter
+        // a chance to finish processing any remaining words on the current top-level line
+        // (e.g. nothing, or if somehow more) and print the "OK" if the line completed.
+        runInterpreter()
     }
 
     private func refillLineBuffer() -> Bool {
@@ -551,12 +581,19 @@ public final class LBForth {
         //
         // We sleep briefly in the spin loop so we don't burn 100% CPU while waiting.
         _ = register("KEY") {
-            while self.inputQueue.isEmpty {
-                // Small sleep to avoid spinning at 100% CPU.
-                // 10ms is responsive enough for interactive use while being gentle on the host.
-                usleep(10000)
-            }
-            self.push( Int(self.inputQueue.removeFirst()) )
+            // KEY is always treated as a blocking input request in this console.
+            // We do *not* consume any characters from the current inputQueue (even if "key ."
+            // was typed on the same line). The remaining text on the line (e.g. " .") is left
+            // in the queue to be processed *after* the key value is supplied and we resume.
+            //
+            // This gives the exact behavior requested: typing "key ." <return> causes the system
+            // to wait for the user to press a key (via a subsequent provideKey from the UI),
+            // then the "." will print the ascii value of the key that was entered.
+            self.waitingForKey = true
+            // The host (ConsoleView or TestLBForth) will call provideKey(_ char) when the user
+            // supplies a character. That will push the value and resume the suspended interpreter
+            // (outer or innerThread, with proper IP/return stack handling).
+            return
         }
 
         // KEY? ( -- flag )
@@ -1232,6 +1269,12 @@ public final class LBForth {
                 } else {
                     // Execute
                     execute(cfa: cfa, firstCell: first)
+                    if waitingForKey {
+                        // A blocking input word (currently only KEY) has suspended.
+                        // Break out of the line interpreter so control returns to the UI.
+                        // The UI will later call provideKey when the user supplies a character.
+                        break
+                    }
                 }
             } else {
                 // Try number
@@ -1257,7 +1300,10 @@ public final class LBForth {
         // in interpret mode, print "OK" followed by newline.
         // (No leading space so that after ".s" or CR it doesn't look indented,
         // and after "." we get the single space that "." already emitted.)
-        if !errorFlag && readCell(STATE) == 0 {
+        //
+        // Do not print OK if we suspended for a blocking input word like KEY;
+        // the OK will be printed when the line is resumed and completed after provideKey.
+        if !errorFlag && readCell(STATE) == 0 && !waitingForKey {
             tell("OK\n")
         }
 
@@ -1350,6 +1396,14 @@ public final class LBForth {
             if cell >= 0 && cell < Cell(primitives.count),
                let f = primitives[Int(cell)] {
                 f()
+                if waitingForKey {
+                    // A blocking primitive (KEY) has decided to wait for host input.
+                    // Rewind IP so the next innerThread() call will hit this cell again.
+                    // In provideKey we will advance past it after injecting the value,
+                    // so we do not re-execute the KEY primitive.
+                    ip -= 8
+                    break
+                }
             } else if cell < Cell(MAX_BUILTIN_ID) {
                 // A small integer that is not a registered primitive ID.
                 // This usually means a branch or call landed on a data literal
@@ -1392,6 +1446,7 @@ public final class LBForth {
         inputQueue.removeAll(keepingCapacity: true)
         debugEnabled = false   // return to clean default
         clearScreenRequested = false
+        waitingForKey = false
         // Leave IP wherever it is; the next feedLine will start fresh parsing from
         // whatever input arrives next. Future improvement: point ip at a real QUIT
         // threaded-code sequence once we have one.
@@ -1408,6 +1463,7 @@ public final class LBForth {
         // 1. Drain everything remaining from the current (bad) line.
         //    This is the main fix for "left over stuff in a buffer".
         inputQueue.removeAll(keepingCapacity: true)
+        waitingForKey = false
 
         // 2. Error handling during compilation vs interpretation.
         //

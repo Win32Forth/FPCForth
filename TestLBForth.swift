@@ -49,6 +49,18 @@ while let line = readLine() {
     
     // Send the line to the engine
     forth.feedLine(line)
+
+    // Support blocking KEY in the standalone tester: if the previous feed
+    // left a KEY waiting, read additional lines and supply the first char
+    // of each as key input until the KEY is satisfied.
+    while forth.waitingForKey {
+        guard let keyLine = readLine() else { break }
+        if let first = keyLine.first {
+            forth.provideKey(Int(first.asciiValue ?? 0))
+        } else {
+            forth.provideKey(32) // space for empty line
+        }
+    }
     
     // After every line, show the current data stack (very helpful while developing)
     let stack = forth.stackAsString
