@@ -1,10 +1,14 @@
 //
-//  LBForth.swift
+//  TZForth.swift
 //  TZForth
 //
 //  A Swift port of the core ideas from Leif Bruder's lbForth (public domain).
 //  https://gist.github.com/lbruder/10007431
 //
+//  Externally named TZForth to reflect the project; internally the implementation
+//  model, comments and credits continue to respect the Leif Bruder lbForth origins.
+//
+
 //  Central insight we are preserving:
 //  - Primitives are given very small integer IDs (0, 1, 2, ...).
 //  - In the threaded code stored in colon definitions we store these small IDs
@@ -18,9 +22,25 @@
 //  The goal is a working classic Forth console experience as quickly as possible.
 //
 
+//
+// Public Domain Statement
+//
+// This software is released into the public domain.
+// 
+// TZForth is free and unencumbered software dedicated to the public domain.
+// 
+// The engine (class TZForth, file TZForth.swift) and related test harness
+// are externally named to reflect the TZForth project and its author.
+// Internally, this implementation respects its origins as a Swift port of
+// the public-domain lbForth model and techniques by Leif Bruder (2014).
+// See: https://gist.github.com/lbruder/10007431
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+//
+
 import Foundation
 
-public final class LBForth {
+public final class TZForth {
 
     // MARK: - Configuration
 
@@ -443,7 +463,7 @@ public final class LBForth {
         logicalCurrentDirectory = FileManager.default.currentDirectoryPath
 
         // === Strong diagnostic after registration ===
-        print("=== LBForth INIT DIAGNOSTICS ===")
+        print("=== TZForth INIT DIAGNOSTICS ===")
         print("primitives[0] (DOCOL) set: \(primitives[0] != nil)")
         print("primitives.count after registration: \(primitives.count)")
 
@@ -1198,7 +1218,7 @@ public final class LBForth {
             // to wait for the user to press a key (via a subsequent provideKey from the UI),
             // then the "." will print the ascii value of the key that was entered.
             self.waitingForKey = true
-            // The host (ConsoleView or TestLBForth) will call provideKey(_ char) when the user
+            // The host (ConsoleView or TestTZForth) will call provideKey(_ char) when the user
             // supplies a character. That will push the value and resume the suspended interpreter
             // (outer or innerThread, with proper IP/return stack handling).
             return
@@ -2183,8 +2203,9 @@ public final class LBForth {
         }
 
         // ANS-VALIDATE — run the 2012 ANS Forth Core + Core Ext validation tests (ported
-        // from the TestLBForth FTEST harness) and write detailed results to ANS-VALIDATE.txt
-        // in the folder containing the TestLBForth.swift (i.e. next to the tests source).
+        // from the TestTZForth FTEST harness, originally TestLBForth.swift) and write detailed results to ANS-VALIDATE.txt
+        // in the folder containing the TestTZForth.swift (i.e. next to the tests source).
+        // Internally we respect the Leif Bruder lbForth origins of the test logic.
         // The tests exercise many current words against their standard stack effects and
         // behaviors. Results are also returned on the stack as a counted string for inspection.
         // (Uses temp files + loadFile/feedLine internally; restores output handler afterwards.)
@@ -2197,12 +2218,12 @@ public final class LBForth {
             var outBase = self.logicalCurrentDirectory.isEmpty ? FileManager.default.currentDirectoryPath : self.logicalCurrentDirectory
             let fm2 = FileManager.default
             let subDir = URL(fileURLWithPath: outBase).appendingPathComponent("TZForth")
-            let directTest = URL(fileURLWithPath: outBase).appendingPathComponent("TestLBForth.swift")
-            let subTest = subDir.appendingPathComponent("TestLBForth.swift")
+            let directTest = URL(fileURLWithPath: outBase).appendingPathComponent("TestTZForth.swift")
+            let subTest = subDir.appendingPathComponent("TestTZForth.swift")
             if fm2.fileExists(atPath: subTest.path) {
                 outBase = subDir.path   // txt next to .swift inside TZForth/ subdir
             } else if fm2.fileExists(atPath: directTest.path) {
-                outBase = outBase       // already in the folder with TestLBForth.swift
+                outBase = outBase       // already in the folder with TestTZForth.swift
             }
             let outURL = URL(fileURLWithPath: outBase).appendingPathComponent("ANS-VALIDATE.txt")
             do {
@@ -3071,10 +3092,11 @@ public final class LBForth {
         return result.reversed()
     }
 
-    // MARK: - ANS Validation Tests (ported/adapted from TestLBForth.swift FTEST)
+    // MARK: - ANS Validation Tests (ported/adapted from TestTZForth.swift FTEST, originally TestLBForth.swift)
     // These sources and runner allow the ANS-VALIDATE word to run the 2012 ANS Forth
     // Core/Core Ext compliance tests from inside the interpreter and write results to
-    // ANS-VALIDATE.txt next to the test source (in the dev folder of TestLBForth.swift).
+    // ANS-VALIDATE.txt next to the test source (in the dev folder of TestTZForth.swift).
+    // The test logic and sources originated in the standalone tester; we respect the lbForth model origins internally.
 
     private let testBlockSrc = """
 \\ normal line comment
@@ -3128,7 +3150,7 @@ hello
         let originalLogical = self.logicalCurrentDirectory
         let originalCwd = FileManager.default.currentDirectoryPath
 
-        var results = "=== ANS-VALIDATE: 2012 ANS Forth Core + Core Ext validation (from TestLBForth FTEST logic) ===\n\n"
+        var results = "=== ANS-VALIDATE: 2012 ANS Forth Core + Core Ext validation (from TestTZForth / original TestLBForth FTEST logic) ===\n\n"
         var collected = ""
 
         let originalOnOutput = self.onOutput
@@ -3358,7 +3380,7 @@ hello
         results += "TEST STATE @: STATE @ . => \(stateFetch) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
 
         // === Expanded ANS 2012 Core + Core Ext spot checks (full port) ===
-        // This is the rich TEST6 block from the original TestLBForth.swift FTEST harness.
+        // This is the rich TEST6 block from the original TestLBForth.swift FTEST harness (now in TestTZForth.swift).
         // ~60 individual tests exercising documented 2012 ANS stack effects + behaviors
         // for arithmetic, logic, compares, stacks, rstack, memory, consts, I/O, control,
         // dict words, etc. Each produces a "TEST6 foo: pass" or detailed FAIL line.

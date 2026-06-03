@@ -1,19 +1,19 @@
 //
-//  TestLBForth.swift
+//  TestTZForth.swift
 //
-//  Standalone tester for the LBForth engine (Leif Bruder public-domain model).
+//  Standalone tester for the TZForth engine (based on Leif Bruder public-domain lbForth / LBForth model).
 //
 //  How to run (note: multi-file swift script needs concatenation on current Swift):
 //
 //      cd /path/to/TZForth
-//      cat TZForth/LBForth.swift TZForth/TestLBForth.swift > /tmp/combined.swift
+//      cat TZForth/TZForth.swift TZForth/TestTZForth.swift > /tmp/combined.swift
 //      swift /tmp/combined.swift
 //
 //      # For automated tests (\\ block comments, \S, FLOAD behavior):
 //      FTEST=1 swift /tmp/combined.swift
 //
 //  Note: The test logic has been integrated into the main engine as the ANS-VALIDATE word
-//  (see LBForth.swift). This script remains for standalone/dev testing outside the app.
+//  (see TZForth.swift, originally LBForth.swift). This script remains for standalone/dev testing outside the app.
 //
 //  This completely bypasses Xcode so you can test the actual Forth engine
 //  while we sort out the Xcode 26.5 build service crashes.
@@ -25,23 +25,39 @@
 //    are treated as addresses of other threaded code (colon definitions).
 //
 
+//
+// Public Domain Statement
+//
+// This software is released into the public domain.
+// 
+// TZForth is free and unencumbered software dedicated to the public domain.
+// 
+// The standalone tester (TestTZForth.swift, originally TestLBForth.swift) and
+// the embedded validation logic are part of the TZForth project.
+// Internally we respect and preserve the Leif Bruder 2014 public-domain lbForth
+// model origins for the engine and test techniques.
+// See engine header for the gist link.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+//
+
 import Foundation
 
 // MARK: - Tester
 
-let forth = LBForth()
+let forth = TZForth()
 
 // Capture all output from the Forth engine
 forth.onOutput = { text in
     print(text, terminator: "")
 }
 
-print("=== Test LBForth (Leif Bruder 2014 public domain model) ===")
+print("=== Test TZForth (Leif Bruder 2014 public domain lbForth model) ===")
 print("Architecture: low-ID primitives + threaded colon definitions")
 print("Type normal Forth.  Use 'bye' or Ctrl-D to exit.\n")
 print("Useful for testing:  1 2 + .   : foo 42 ;   foo .   etc.\n")
 
-// MARK: - Automated tests for \\ block comments and \S (run with: FTEST=1 swift ... TestLBForth.swift)
+// MARK: - Automated tests for \\ block comments and \S (run with: FTEST=1 swift ... TestTZForth.swift)
 if ProcessInfo.processInfo.environment["FTEST"] == "1" {
     print("=== Running automated FTEST for \\\\ block comments and \\\\S stop ===")
     var collected = ""

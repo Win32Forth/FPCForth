@@ -5,6 +5,20 @@
 //  Created by Thomas Zimmer mini on 5/30/26.
 //
 
+//
+// Public Domain Statement
+//
+// This software is released into the public domain.
+// 
+// TZForth is free and unencumbered software dedicated to the public domain.
+// 
+// TZForthApp.swift is the @main entry for the TZForth macOS app.
+// The core engine (TZForth class) is based on Leif Bruder's public-domain
+// lbForth model internally. See the engine source for details and credit.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+//
+
 import SwiftUI
 
 @main

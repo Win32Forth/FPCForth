@@ -10,6 +10,16 @@
 		29A09F082FCB95CE00778693 /* TZForth.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TZForth.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		29A09F162FCB95CE00778693 /* Exceptions for "TZForth" folder in "TZForth" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				TestTZForth.swift,
+			);
+			target = 29A09F072FCB95CE00778693 /* TZForth */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		29A09F0A2FCB95CE00778693 /* TZForth */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -20,16 +30,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		29A09F162FCB95CE00778693 /* Exceptions for "TZForth" folder in "TZForth" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				TestLBForth.swift,
-			);
-			target = 29A09F072FCB95CE00778693 /* TZForth */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		29A09F052FCB95CE00778693 /* Frameworks */ = {

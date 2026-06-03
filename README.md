@@ -9,18 +9,18 @@ This project aims to bring the powerful, traditional Forth kernel sources (the `
 ## Current State
 
 - Basic SwiftUI macOS/iOS app structure (`TZForthApp.swift` + `ContentView.swift`)
-- The core is a modern Swift re-implementation of Leif Bruder's lbForth token-threaded model (LBForth.swift)
+- The core is a modern Swift re-implementation of Leif Bruder's lbForth token-threaded model (TZForth.swift; file/class externally renamed from LBForth.swift to reflect TZForth)
 - Full support for structured programming (IF/ELSE/THEN, BEGIN loops, DO/LOOP, CREATE DOES>), FLOAD, EDIT (opens in system TextEditor + updates cwd), CHDIR/DIR, file echo, comments (\ single-line to EOL, \\ block to next { for compatibility), \S stop load, etc.
 - OldSources/ contains historical FPC/Win32Forth .FTH sources for reference and loading experiments.
 
 ## Structure
 
 - `TZForth.xcodeproj/` — Xcode project
-- `TZForth/` — SwiftUI sources + LBForth engine (the main implementation)
+- `TZForth/` — SwiftUI sources + TZForth engine (the main implementation; internally based on Leif Bruder's lbForth)
 
 ## Status
 
-The REPL console is fully working (see TZForth/ConsoleView.swift + LBForth.swift). You can:
+The REPL console is fully working (see TZForth/ConsoleView.swift + TZForth.swift). You can:
 
 - Type normal Forth including multi-line definitions and immediates.
 - `FLOAD` (bare: opens NSOpenPanel; named: `fload Forthing.fth` or `fload forthing` with auto-.fth and case correction).

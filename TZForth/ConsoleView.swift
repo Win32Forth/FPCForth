@@ -3,6 +3,20 @@ import AppKit   // for NSApplication.terminate when BYE is executed
 import Foundation  // for FileManager (current dir for NSOpenPanel)
 import UniformTypeIdentifiers  // for allowedContentTypes (replaces deprecated allowedFileTypes)
 
+//
+// Public Domain Statement
+//
+// This software is released into the public domain.
+// 
+// TZForth is free and unencumbered software dedicated to the public domain.
+// 
+// ConsoleView.swift provides the AppKit/SwiftUI host for the TZForth engine.
+// The driven engine (TZForth) respects Leif Bruder's public-domain lbForth origins internally.
+// See TZForth.swift for full credit and the original model link.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+//
+
 extension Notification.Name {
     static let clearConsole = Notification.Name("ClearConsole")
     static let resetForth   = Notification.Name("ResetForth")
@@ -11,7 +25,7 @@ extension Notification.Name {
 let consoleMessage = "=== TZForth (based on Leif Bruder's lbForth) ===\n\n"
 
 /// A reusable console view that mimics the classic Forth REPL feel.
-/// This version drives the real LBForth engine (Leif Bruder's public-domain model).
+/// This version drives the real TZForth engine (Leif Bruder's public-domain lbForth model).
 struct ConsoleView: View {
     @State private var consoleText = consoleMessage
     @State private var commandHistory: [String] = []
@@ -19,8 +33,8 @@ struct ConsoleView: View {
     @State private var isRecallingHistory = false
     @FocusState private var isFocused: Bool
 
-    // The real Forth engine (Leif Bruder / lbForth style)
-    @State private var forth = LBForth()
+    // The real Forth engine (TZForth; Leif Bruder / lbForth origins internally)
+    @State private var forth = TZForth()
 
     /// Marks the length of consoleText after the last engine output.
     /// Only text typed by the user *after* this point can be treated as new commands.
