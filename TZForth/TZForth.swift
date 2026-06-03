@@ -1976,7 +1976,7 @@ public final class TZForth {
             // - Colon definitions (start with DOCOL) and anything else → push the CFA
             // This is why ' TEST was returning 0 (DOCOL id) instead of the real execution token.
             let firstCell = self.readCell(Int(cfa))
-            if firstCell < Cell(self.MAX_BUILTIN_ID) && firstCell != self.docolID {
+            if firstCell < Cell(self.MAX_BUILTIN_ID) && firstCell != self.docolID && firstCell != self.createRuntimeID && firstCell != self.dodoesID {
                 self.push(firstCell)
             } else {
                 self.push(cfa)
@@ -2391,9 +2391,18 @@ public final class TZForth {
             self.push(a)
         }
         _ = register(">BODY") {
-            // xt of CREATE/VARIABLE child; the data addr value is compiled at cfa+16 (after docol/lit)
+            // For docol+LIT style (VALUE, old manual DEFER): data at xt+16
+            // For CREATE / DOES> children (standard DEFER): data at xt+8
             let xt = self.pop()
-            let dataAddr = self.readCell( Int(xt) + 16 )
+            let first = self.readCell( Int(xt) )
+            let dataAddr: Cell
+            if first == self.docolID {
+                dataAddr = self.readCell( Int(xt) + 16 )
+            } else if first == self.createRuntimeID || first == self.dodoesID {
+                dataAddr = self.readCell( Int(xt) + 8 )
+            } else {
+                dataAddr = self.readCell( Int(xt) + 16 )
+            }
             self.push( dataAddr )
         }
 
@@ -3139,31 +3148,26 @@ public final class TZForth {
         }
 
         // DEFER ( "<spaces>name" -- )  Core Ext
-        // Creates a word "name" whose execution semantics can be changed later.
-        // Body layout: docol  LIT <xt-cell>  @  EXECUTE  EXIT
+        // Manual docol + LIT + storage + @ EXECUTE style (efficient, ' gives cfa).
+        // (We also support high-level CREATE/DOES> defers via updated DEFER!/IS logic.)
         _ = register("DEFER") {
             let name = self.parseWord()
             if name.isEmpty { self.tell("? DEFER needs a name\n"); self.errorFlag = true; return }
             self.createWord(name: name, immediate: false)
             self.push(self.docolID); self.comma()
             self.push(self.litID); self.comma()
-            // After docol + LIT + <payload> + @ + EXECUTE + EXIT (6 cells) the storage cell will be here.
-            // At this moment (after LIT comma) we have written 2 cells, 4 more 8-byte commas ahead => +32
+            // After docol + LIT + <payload> + @ + EXECUTE + EXIT the storage cell is allocated.
             let xtCellAddr = self.readCell(self.DP_ADDR) + 32
             self.push(xtCellAddr); self.comma()
-            // Fetch the xt and EXECUTE it at runtime
             self.push(self.fetchID); self.comma()
             self.push(self.executeID); self.comma()
             self.push(self.exitID); self.comma()
-            // allocate the xt cell (DP now points at it)
             self.writeCell(self.DP_ADDR, self.readCell(self.DP_ADDR) + 8)
-            // initial xt = 0 (executing an uninitialized defer will try to execute 0 -> error in execute())
+            // initial behavior left as 0 (will error if executed before IS/DEFER!)
         }
 
         // VALUE ( n "<spaces>name" -- )  Core Ext
-        // Like a VARIABLE but executes to push the contents ( -- n ).
-        // Body: docol  LIT <val-cell>  @  EXIT
-        // Assignment via IS (or we can add TO later).
+        // docol + LIT <val-cell> @ EXIT style.
         _ = register("VALUE") {
             let name = self.parseWord()
             if name.isEmpty { self.tell("? VALUE needs a name\n"); self.errorFlag = true; return }
@@ -3171,12 +3175,10 @@ public final class TZForth {
             self.createWord(name: name, immediate: false)
             self.push(self.docolID); self.comma()
             self.push(self.litID); self.comma()
-            // docol + lit + payload + @ + exit = 5 cells. After lit comma: +24 bytes to the data cell.
             let valCellAddr = self.readCell(self.DP_ADDR) + 24
             self.push(valCellAddr); self.comma()
-            self.push(self.fetchID); self.comma()   // @
+            self.push(self.fetchID); self.comma()
             self.push(self.exitID); self.comma()
-            // allocate the value cell and store the initial n
             self.writeCell(self.DP_ADDR, self.readCell(self.DP_ADDR) + 8)
             self.writeCell(Int(valCellAddr), n)
         }
@@ -3186,21 +3188,26 @@ public final class TZForth {
         _ = register("DEFER!") {
             let deferXt = self.pop()
             let newXt = self.pop()
-            // deferXt should be the cfa (or id, but for user defers it's cfa)
-            // For our defers, the cfa points to docol; the storage cell is at cfa+16 (after docol + LIT + addr)
             if deferXt < Cell(self.MAX_BUILTIN_ID) {
                 self.tell("? DEFER! on a primitive\n"); self.errorFlag = true; return
             }
             let cfa = Int(deferXt)
             let first = self.readCell(cfa)
-            if first != self.docolID {
-                self.tell("? DEFER! target is not a colon def\n"); self.errorFlag = true; return
+            var storageAddr: Int = 0
+            if first == self.docolID {
+                // old docol + LIT <storage> style (VALUE, old DEFER)
+                let second = self.readCell(cfa + 8)
+                if second != self.litID {
+                    self.tell("? DEFER! target does not look like a DEFER or VALUE\n"); self.errorFlag = true; return
+                }
+                storageAddr = Int( self.readCell(cfa + 16) )
+            } else if first == self.createRuntimeID || first == self.dodoesID {
+                // CREATE or DOES> child (standard high-level DEFER using CREATE DOES>)
+                // storage / behavior cell is the second cell after the runtime ID
+                storageAddr = Int( self.readCell(cfa + 8) )
+            } else {
+                self.tell("? DEFER! target is not a supported defer or value\n"); self.errorFlag = true; return
             }
-            let second = self.readCell(cfa + 8)
-            if second != self.litID {
-                self.tell("? DEFER! target does not look like a DEFER or VALUE\n"); self.errorFlag = true; return
-            }
-            let storageAddr = Int( self.readCell(cfa + 16) )
             self.writeCell(storageAddr, newXt)
         }
 
@@ -3213,14 +3220,16 @@ public final class TZForth {
             }
             let cfa = Int(deferXt)
             let first = self.readCell(cfa)
-            if first != self.docolID {
+            var storageAddr: Int = 0
+            if first == self.docolID {
+                let second = self.readCell(cfa + 8)
+                if second != self.litID { self.push(0); return }
+                storageAddr = Int( self.readCell(cfa + 16) )
+            } else if first == self.createRuntimeID || first == self.dodoesID {
+                storageAddr = Int( self.readCell(cfa + 8) )
+            } else {
                 self.push(0); return
             }
-            let second = self.readCell(cfa + 8)
-            if second != self.litID {
-                self.push(0); return
-            }
-            let storageAddr = Int( self.readCell(cfa + 16) )
             self.push( self.readCell(storageAddr) )
         }
 
@@ -3234,14 +3243,18 @@ public final class TZForth {
             if hdr == 0 { self.tell("? IS ? " + name + "\n"); self.errorFlag = true; return }
             let cfa = self.getCFA(hdr)
             let first = self.readCell(Int(cfa))
-            if first != self.docolID {
-                self.tell("? IS target is not a defer or value\n"); self.errorFlag = true; return
+            var storageAddr: Int = 0
+            if first == self.docolID {
+                let second = self.readCell(Int(cfa) + 8)
+                if second != self.litID {
+                    self.tell("? IS target does not look like DEFER/VALUE\n"); self.errorFlag = true; return
+                }
+                storageAddr = Int( self.readCell(Int(cfa) + 16) )
+            } else if first == self.createRuntimeID || first == self.dodoesID {
+                storageAddr = Int( self.readCell(Int(cfa) + 8) )
+            } else {
+                self.tell("? IS target is not a supported defer or value\n"); self.errorFlag = true; return
             }
-            let second = self.readCell(Int(cfa) + 8)
-            if second != self.litID {
-                self.tell("? IS target does not look like DEFER/VALUE\n"); self.errorFlag = true; return
-            }
-            let storageAddr = Int( self.readCell(Int(cfa) + 16) )
             self.writeCell(storageAddr, newXt)
         }
 
