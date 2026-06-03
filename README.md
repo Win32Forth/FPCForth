@@ -1,19 +1,19 @@
 # TZForth
 
-A SwiftUI-based host and development environment for classic FPC / Win32Forth Forth systems.
+A SwiftUI-based host and development environment for based on Leif Bruder's Pblic Domain lbForth system.
 
 **GitHub:** https://github.com/Win32Forth/TZForth (previously named FPCForth in the repo)
 
 ## About
 
-This project aims to bring the powerful, traditional Forth kernel sources (the `.SEQ` block files from the FPC/Win32Forth lineage) into a modern SwiftUI application on Apple platforms.
+This project aims to bring the powerful, traditional Forth kernel sources into a modern SwiftUI application on Apple platforms for the M1, M2, M3, M4, M5, etc. processor families.
 
 ## Current State
 
 - Basic SwiftUI macOS/iOS app structure (`TZForthApp.swift` + `ContentView.swift`)
 - The core is a modern Swift re-implementation of Leif Bruder's lbForth token-threaded model (TZForth.swift; file/class externally renamed from LBForth.swift to reflect TZForth)
 - Full support for structured programming (IF/ELSE/THEN, BEGIN loops, DO/LOOP, CREATE DOES>), FLOAD, EDIT (opens in system TextEditor + updates cwd), CHDIR/DIR, file echo, comments (\ single-line to EOL, \\ block to next { for compatibility), \S stop load, etc.
-- OldSources/ contains historical FPC/Win32Forth .FTH sources for reference and loading experiments.
+- OldSources/ contains historical FPC/Win32Forth/GrokForth/TCOM25 Forth sources for reference and loading experiments.
 
 ## Structure
 
@@ -52,7 +52,35 @@ In short: it is *not* hopeless. One bare `fload` + pick in the folder containing
 
 ## License / Attribution
 
-The Forth kernel sources originate from the FPC (Forth for Personal Computers) / Win32Forth project by Tom Zimmer and contributors. This is an experimental modern re-hosting effort.
+// Public Domain Statement
+//
+// This software is released into the public domain.
+// 
+// TZForth is free and unencumbered software dedicated to the public domain.
+// 
+// The engine (class TZForth, file TZForth.swift) and related test harness
+// are externally named to reflect the TZForth project and its author.
+// Internally, this implementation respects its origins as a Swift port of
+// the public-domain lbForth model and techniques by Leif Bruder (2014).
+
+// Also, I want to credit the Grok Build AI for doing most of the work.
+// while I ( Tom Zimmer Win32Forth@mac.com ) did pay for the use of Grok Build,
+// I could never have ompleted this project without the invaluble assisstance
+// of Grok Build. Now, at an age of almost 76, my memory and skills are not what
+// they once were, back in the 80s and 90s, when I was producing so many of the
+// Forth systems I am credited with creating. Those were good years, but they
+// are behind me. Having the opportunity to participate in producing another
+// complex Forth system in my retirement years has been very encouraging to me,
+// and can be credited with helping me retain or recover some of the
+// intelligence and skills I once had.
+
+//Thank you Grok Build, this is definitely a great adventure!
+
+// See: https://gist.github.com/lbruder/10007431
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+This is an experimental modern re-hosting effort.
 
 ---
 
