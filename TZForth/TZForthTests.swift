@@ -35,6 +35,7 @@ extension TZForth {
         let preValidationHere = self.readCell(self.DP_ADDR)
         let preValidationContext = self.readCell(self.CONTEXT)
         let preValidationCurrent = self.readCell(self.CURRENT)
+        let preValidationSearchOrder = self.searchOrder
 
         var results = "=== ANS-VALIDATE: 2012 ANS Forth Core + Core Ext validation (from TestTZForth / original TestLBForth FTEST logic) ===\n\n"
         var collected = ""
@@ -452,6 +453,8 @@ extension TZForth {
         // Vocabularies and filtered WORDS (all words currently in FORTH)
         ansTest("VOCABULARY FORTH DEFINITIONS", "VOCABULARY FOO FOO DEFINITIONS 123 CONSTANT baz FORTH DEFINITIONS 456 .", "456")
         ansTest("WORDS filter", "WORDS CONSTANT", "CONSTANT")
+        ansTest("ALSO ONLY VOCABULARIES", "ONLY ALSO FORTH VOCABULARIES", "FORTH")
+        ansTest("ALSO search", "ONLY ALSO FORTH 1 2 + .", "3")
 
         results += "TEST6 ANS core summary: \(ansPassed)/\(ansTotal) passed\n"
         if ansPassed != ansTotal {
@@ -473,6 +476,10 @@ extension TZForth {
         self.writeCell(self.DP_ADDR, preValidationHere)
         self.writeCell(self.CONTEXT, preValidationContext)
         self.writeCell(self.CURRENT, preValidationCurrent)
+        self.searchOrder = preValidationSearchOrder
+        if !self.searchOrder.isEmpty {
+            self.writeCell(self.CONTEXT, self.searchOrder[0])
+        }
 
         // Make sure runtime state (stacks, STATE, flags, etc.) is clean too.
         self.resetRuntimeState()

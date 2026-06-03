@@ -537,6 +537,8 @@ hello
     // Vocabularies and filtered WORDS (all words currently in FORTH)
     ansTest("VOCABULARY FORTH DEFINITIONS", "VOCABULARY FOO FOO DEFINITIONS 123 CONSTANT baz FORTH DEFINITIONS 456 .", "456")
     ansTest("WORDS filter", "WORDS CONSTANT", "CONSTANT")
+    ansTest("ALSO ONLY VOCABULARIES", "ONLY ALSO FORTH VOCABULARIES", "FORTH")
+    ansTest("ALSO search", "ONLY ALSO FORTH 1 2 + .", "3")
 
     print("TEST6 ANS core summary: \(ansPassed)/\(ansTotal) passed")
     if ansPassed != ansTotal {

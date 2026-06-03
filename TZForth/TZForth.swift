@@ -94,6 +94,9 @@ public final class TZForth {
     internal var CONTEXT: Int { 56 } // holds the addr of the head-cell for the current search vocabulary (e.g. 0 for FORTH); internal for test harness snapshots
     internal var CURRENT: Int { 64 } // holds the addr of the head-cell for the current definitions vocabulary; internal for test harness snapshots
 
+    private let MAX_VOCABS = 8
+    internal var searchOrder: [Cell] = []  // array of wl head-cell-addrs; [0] is top (first searched)
+
     private var stackBase: Int
     private var rstackBase: Int
 
@@ -305,7 +308,10 @@ public final class TZForth {
         ("POSTPONE","( -- ) name",        "append compilation semantics of next word (immediate)"),
         ("[COMPILE]","( -- ) name",       "force compile of next word even if immediate (immediate)"),
         ("VOCABULARY","( -- ) name",      "create a new vocabulary"),
-        ("FORTH",   "( -- )",             "select the FORTH vocabulary (sets CONTEXT)"),
+        ("FORTH",   "( -- )",             "select the FORTH vocabulary (sets top of search order)"),
+        ("ALSO",    "( -- )",             "duplicate top of search order"),
+        ("ONLY",    "( -- )",             "reset search order to only FORTH"),
+        ("VOCABULARIES","( -- )",         "display current search order and current definitions vocab"),
         ("DEFINITIONS","( -- )",          "set CURRENT to CONTEXT (new words go to current vocab)"),
         (">NUMBER", "( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )", "convert string digits to number accumulating in ud"),
         ("ALLOT",   "( n -- )",           "allocate n bytes in dictionary"),
@@ -534,8 +540,10 @@ public final class TZForth {
         writeCell(STATE, 0)
         writeCell(BASE, 10)
         writeCell(IN, 0)
-        writeCell(CONTEXT, LATEST)  // initially FORTH's head cell (addr 0)
+        searchOrder = [LATEST]
+        setContext(LATEST)
         writeCell(CURRENT, LATEST)
+        searchOrder = [LATEST]
 
         // Live stack depths live in Swift vars (corruption-proof).
         // We still write the old fixed locations for any future raw memory inspection or "SP @" compatibility.
@@ -1159,40 +1167,48 @@ public final class TZForth {
         writeCellHere(value)
     }
 
-    // MARK: - Finding words
+    private func setContext(_ wlID: Cell) {
+        writeCell(CONTEXT, wlID)
+        if searchOrder.isEmpty {
+            searchOrder.append(wlID)
+        } else {
+            searchOrder[0] = wlID
+        }
+    }
 
-    private func findWord(_ name: String) -> Cell {
-        let upper = name.uppercased()
-
-        // Search current vocabulary first
-        let searchHeadCell = readCell(CONTEXT)
-        var link = readCell(searchHeadCell)
+    private func nameForVocab(_ wlID: Cell) -> String {
+        if wlID == self.LATEST { return "FORTH" }
+        var link = readCell(self.LATEST)
         var safety = 0
         while link != 0 && safety < 10000 {
             safety += 1
             if !isValidDictionaryLink(link) { break }
-            let flagsLen = readByte(link + 8)
-            let namelen = Int(flagsLen & MASK_NAMELENGTH)
-            if namelen == upper.utf8.count {
-                var match = true
-                for (i, ch) in upper.utf8.enumerated() {
-                    if up(readByte(link + 9 + i)) != up(ch) {
-                        match = false
-                        break
+            let cfa = getCFA(link)
+            let first = readCell(Int(cfa))
+            if first == createRuntimeID || first == dodoesID {
+                let dataAddr = readCell(Int(cfa) + 8)
+                if dataAddr == wlID {
+                    let flagsLen = readByte(Int(link) + 8)
+                    let len = Int(flagsLen & MASK_NAMELENGTH)
+                    var nameBytes: [UInt8] = []
+                    for i in 0..<len {
+                        nameBytes.append(readByte(Int(link) + 9 + i))
                     }
-                }
-                if match && (flagsLen & FLAG_HIDDEN) == 0 {
-                    return link
+                    return String(bytes: nameBytes, encoding: .utf8) ?? "???"
                 }
             }
             link = readCell(link)
         }
+        return "???"
+    }
 
-        // Fallback to FORTH vocabulary (so system words are always available)
-        let forthHeadCell: Cell = LATEST
-        if searchHeadCell != forthHeadCell {
-            link = readCell(forthHeadCell)
-            safety = 0
+    // MARK: - Finding words
+
+    private func findWord(_ name: String) -> Cell {
+        let upper = name.uppercased()
+        for wlID in searchOrder {
+            var link = readCell(wlID)
+            var safety = 0
             while link != 0 && safety < 10000 {
                 safety += 1
                 if !isValidDictionaryLink(link) { break }
@@ -1505,6 +1521,43 @@ public final class TZForth {
         _ = register("CONTEXT") { self.push( Cell( self.CONTEXT ) ) }
         _ = register("CURRENT") { self.push( Cell( self.CURRENT ) ) }
 
+        _ = register("SET-CONTEXT") {
+            let wlID = self.pop()
+            self.setContext(wlID)
+        }
+
+        _ = register("ALSO") {
+            if self.searchOrder.count >= self.MAX_VOCABS {
+                self.tell("? Search order full\n")
+                self.errorFlag = true
+                return
+            }
+            if self.searchOrder.isEmpty {
+                self.searchOrder.append(self.LATEST)
+            }
+            let top = self.searchOrder[0]
+            self.searchOrder.insert(top, at: 0)
+            self.setContext(top)
+        }
+
+        _ = register("ONLY") {
+            self.searchOrder = [self.LATEST]
+            self.setContext(self.LATEST)
+        }
+
+        _ = register("VOCABULARIES") {
+            self.validateAndRepairSystemState()
+            self.tell("Context: ")
+            for wlID in self.searchOrder {
+                let nm = self.nameForVocab(wlID)
+                self.tell(nm + " ")
+            }
+            self.tell("\nCurrent: ")
+            let cur = self.readCell(self.CURRENT)
+            let cnm = self.nameForVocab(cur)
+            self.tell(cnm + "\n")
+        }
+
         // >HEADER ( xt -- header )  Given a code field address (xt), return the
         // start of its dictionary header (the link field address).  This is the
         // key primitive needed to implement proper linked-list dictionary walking.
@@ -1512,18 +1565,19 @@ public final class TZForth {
         // FORGET now also restores HERE to reclaim memory for the forgotten word(s).
         _ = register(">HEADER") {
             let targetCFA = self.pop()
-            let searchHeadCell = self.readCell(self.CONTEXT)
-            var link = self.readCell(searchHeadCell)
-            var safety = 0
-            while link != 0 && safety < 10000 {
-                safety += 1
-                if !self.isValidDictionaryLink(link) { break }
-                let thisCFA = self.getCFA(link)
-                if thisCFA == targetCFA {
-                    self.push(link)
-                    return
+            for wlID in self.searchOrder {
+                var link = self.readCell(wlID)
+                var safety = 0
+                while link != 0 && safety < 10000 {
+                    safety += 1
+                    if !self.isValidDictionaryLink(link) { break }
+                    let thisCFA = self.getCFA(link)
+                    if thisCFA == targetCFA {
+                        self.push(link)
+                        return
+                    }
+                    link = self.readCell(link)
                 }
-                link = self.readCell(link)
             }
             self.push(0)   // not found
         }
@@ -2794,7 +2848,7 @@ public final class TZForth {
             var kernelWords: [(name: String, header: Cell)] = []
             var userWords:   [(name: String, header: Cell)] = []
 
-            let searchHeadCell = self.readCell(self.CONTEXT)
+            let searchHeadCell = self.searchOrder.isEmpty ? self.LATEST : self.searchOrder[0]
             var link = self.readCell(searchHeadCell)
             var safety = 0
             while link != 0 && safety < 10000 {
@@ -2860,7 +2914,7 @@ public final class TZForth {
                 return
             }
 
-            let searchHeadCell = self.readCell(self.CONTEXT)
+            let searchHeadCell = self.searchOrder.isEmpty ? self.LATEST : self.searchOrder[0]
             var link = self.readCell(searchHeadCell)
             var prev: Cell = 0
             var safety = 0
@@ -3413,8 +3467,8 @@ public final class TZForth {
         self.feedLine(": HERE DP @ ;")
 
         // Vocabulary support (high-level for nice SEE decompile)
-        self.feedLine(": VOCABULARY CREATE 0 , DOES> CONTEXT ! ;")
-        self.feedLine(": FORTH 0 CONTEXT ! ;")
+        self.feedLine(": VOCABULARY CREATE 0 , DOES> @ SET-CONTEXT ;")
+        self.feedLine(": FORTH 0 SET-CONTEXT ;")
         self.feedLine(": DEFINITIONS CONTEXT @ CURRENT ! ;")
 
         // file-echo variable (user can do: file-echo ON   or   file-echo OFF ).
@@ -3931,7 +3985,7 @@ public final class TZForth {
                 continue
             }
 
-            let searchHeadCell = self.readCell(self.CONTEXT)
+            let searchHeadCell = self.searchOrder.isEmpty ? self.LATEST : self.searchOrder[0]
             var targetHeader = self.readCell(searchHeadCell)
             var foundName: String? = nil
             var walkSafety = 0
@@ -3997,7 +4051,8 @@ public final class TZForth {
         // If still 0 (shouldn't happen), FLOAD will just treat echo as off; safe.
 
         // Reset to FORTH vocabulary
-        writeCell(CONTEXT, LATEST)
+        searchOrder = [LATEST]
+        setContext(LATEST)
         writeCell(CURRENT, LATEST)
     }
 
@@ -4029,7 +4084,8 @@ public final class TZForth {
         // pictured state
         self.pnoPtr = self.pnoBufferAddr + self.PNO_BUFFER_SIZE
         writeCell(IN, 0)
-        writeCell(CONTEXT, LATEST)
+        searchOrder = [LATEST]
+        setContext(LATEST)
         writeCell(CURRENT, LATEST)
         self.currentSourceLen = 0
     }
@@ -4068,7 +4124,8 @@ public final class TZForth {
         self.sourceLoadStop = false
         self.pnoPtr = self.pnoBufferAddr + self.PNO_BUFFER_SIZE
         self.currentSourceLen = 0
-        writeCell(CONTEXT, LATEST)
+        searchOrder = [LATEST]
+        setContext(LATEST)
         writeCell(CURRENT, LATEST)
 
         let wasLoading = self.loadNesting > 0
@@ -4171,10 +4228,9 @@ public final class TZForth {
         // Ensure CONTEXT/CURRENT point to a valid head cell (default to FORTH)
         let cctx = readCell(CONTEXT)
         if cctx != LATEST && cctx != 0 { /* leave, or could validate */ }
-        if readCell(CONTEXT) == 0 {
-            writeCell(CONTEXT, LATEST)
-        }
-        if readCell(CURRENT) == 0 {
+        if readCell(CONTEXT) == 0 || readCell(CURRENT) == 0 || searchOrder.isEmpty {
+            searchOrder = [LATEST]
+            setContext(LATEST)
             writeCell(CURRENT, LATEST)
         }
 
@@ -4189,8 +4245,6 @@ public final class TZForth {
         }
         pnoPtr = pnoBufferAddr + PNO_BUFFER_SIZE
         writeCell(IN, 0)
-        writeCell(CONTEXT, LATEST)
-        writeCell(CURRENT, LATEST)
     }
 
     public var stackAsString: String {

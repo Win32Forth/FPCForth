@@ -44,7 +44,7 @@ U>
 UNUSED
 
 Notes:
-- Added: VOCABULARY, FORTH, DEFINITIONS (basic single-vocab support; all words in FORTH for now), plus WORDS with optional case-insensitive substring filter (only shows from current vocab).
+- Added: VOCABULARY, FORTH, DEFINITIONS, ALSO, ONLY, VOCABULARIES (full search-order stack support using ALSO/ONLY; VOCABULARIES lists the order + current defs), plus prior WORDS filter. All kernel words in FORTH; new vocabs start empty. Lookup searches the order (top first).
 - CONTEXT / CURRENT exposed.
 - WORDS filter and per-vocab listing implemented; lookup falls back to FORTH for system words.
 - Previous batch notes still apply.
@@ -59,6 +59,6 @@ Notes:
 - To continue: next would be remaining Core Ext per explicit plan, then vocabularies to hide internals.
 
 Generated from codebase inspection (TZForth.swift, TZForthTests.swift, TestTZForth.swift, live runs).
-Last update: after adding VOCABULARY, FORTH, DEFINITIONS + filtered WORDS (per current vocab).
+Last update: after adding ALSO, ONLY, VOCABULARIES + search order stack.
 
 For full standard details, refer to the official 2012 ANS Forth document (sections 6.1 and 6.2).
