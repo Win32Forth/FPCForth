@@ -2,6 +2,8 @@
 
 A SwiftUI-based host and development environment for classic FPC / Win32Forth Forth systems.
 
+**GitHub:** https://github.com/Win32Forth/TZForth (previously named FPCForth in the repo)
+
 ## About
 
 This project aims to bring the powerful, traditional Forth kernel sources (the `.SEQ` block files from the FPC/Win32Forth lineage) into a modern SwiftUI application on Apple platforms.
