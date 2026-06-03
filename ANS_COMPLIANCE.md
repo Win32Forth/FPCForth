@@ -5,7 +5,7 @@ This document summarizes the implementation status of the Core and Core Extensio
 ## Implemented Words (Core + Extensions, non-exhaustive)
 The engine implements a substantial and practical subset of the standard, focused on usability for classic Forth sources (e.g., F-PC style, Forthing.fth). This includes:
 
-- Core arithmetic, stack, comparisons, logic, memory, I/O, control flow, defining words, etc.
+- Core arithmetic (incl. new / +! */MOD etc), double-cell stack ops, memory (FILL etc), literals/immediate, pictured numeric (<# etc), S", etc. (see added list in missing section notes).
 - Many Core Ext: 2>R 2R@ 2R>, NIP, PICK, ROLL, TUCK, U.R, WITHIN, ?DO, etc.
 - App-specific but useful extensions: FLOAD, EDIT, CHDIR, DIR, FILE-ECHO, DEBUG-ON/OFF, >HEADER, >NFA, ID., FORGET-WORD, etc.
 - High-level conveniences: HERE as DP @, >LFA, >NFA, ID., etc.
@@ -14,61 +14,26 @@ The engine implements a substantial and practical subset of the standard, focuse
 See `TZForth/TZForth.swift` (register calls + primitiveHelpData + bootstrap high-level defs; originally LBForth.swift) and `TestTZForth.swift` for details. `WORDS` in the REPL shows current dictionary.
 
 ## Missing from Core Word Set (6.1 - required for conformance)
-(Compiled via comparison of standard list vs. current `primitiveHelpData` + live WORDS + registrations. ~42 items.)
+(Compiled via comparison of standard list vs. current `primitiveHelpData` + live WORDS + registrations. Reduced; many Core words now implemented with tests: double stack, arith, memory, compile/immed, pictured, S", EXECUTE/J/RECURSE, >IN/>NUMBER/ABORT etc, EVALUATE/FIND etc.)
 
 */
-*/MOD
-+!
-/
-2DROP
-2DUP
-2OVER
-2SWAP
 <#
 >BODY
->IN
->NUMBER
-ABORT
-ABORT"
-ACCEPT
-ALIGN
-ALIGNED
-ENVIRONMENT?
-EVALUATE
-EXECUTE
-FILL
-FIND
-FM/MOD
 HOLD
-IMMEDIATE
-J
-LITERAL
-M*
-MOVE
 POSTPONE
 QUIT
-RECURSE
 S"
 S>D
 SIGN
-SM/REM
 SOURCE
-U<
-UM*
-UM/MOD
 [']
 [CHAR]
 
 Notes on some:
-- Many 2- stack words (2DROP etc.) are absent (though 2@ 2! 2>R family exist).
-- No ABORT/ABORT" (error handling is via errorFlag + recover).
-- No full IMMEDIATE word (flag is internal for ; etc.).
-- No J (only I for DO loops).
-- No LITERAL (internal LIT used in compilation).
-- No S" (." exists for compile-time strings).
-- No QUIT as user word (internal loop exists; BYE/RESET provided).
-- No RECURSE.
-- Some like ALIGN, >BODY, FIND, etc., not needed for the current use cases but standard.
+- Pictured numeric output (<# # #S #> HOLD SIGN) + S" + EXECUTE/J/RECURSE + >IN >NUMBER ABORT ABORT" ACCEPT ENVIRONMENT? EVALUATE FIND now implemented (with tests).
+- Still missing: >IN >NUMBER ABORT ABORT" ACCEPT ENVIRONMENT? EVALUATE FIND POSTPONE QUIT S>D SOURCE etc. (recent batches implemented many).
+- ABORT/ABORT", QUIT, RECURSE, full FIND/EVALUATE etc. for complete control and meta-programming.
+- The added words (double stack, extra arith, memory ops, LITERAL etc. + pictured/S" + meta/input batch) have tests and pass in the harness.
 
 ## Missing from Core Extensions Word Set (6.2)
 (~29 items.)

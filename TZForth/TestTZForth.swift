@@ -6,14 +6,17 @@
 //  How to run (note: multi-file swift script needs concatenation on current Swift):
 //
 //      cd /path/to/TZForth
-//      cat TZForth/TZForth.swift TZForth/TestTZForth.swift > /tmp/combined.swift
+//      cat TZForth/TZForth.swift TZForth/TZForthTests.swift TZForth/TestTZForth.swift > /tmp/combined.swift
 //      swift /tmp/combined.swift
 //
 //      # For automated tests (\\ block comments, \S, FLOAD behavior):
 //      FTEST=1 swift /tmp/combined.swift
 //
-//  Note: The test logic has been integrated into the main engine as the ANS-VALIDATE word
-//  (see TZForth.swift, originally LBForth.swift). This script remains for standalone/dev testing outside the app.
+//  Note: The ANS validation test logic (runANSValidation + test sources) was split to
+//  TZForthTests.swift (as extension) to keep the main engine file smaller; it is included
+//  above so that the standalone REPL supports the ANS-VALIDATE word too.
+//  The FTEST harness here remains self-contained (dupe of early test logic for standalone).
+//  See TZForth.swift (originally LBForth.swift) and TZForthTests.swift for credits.
 //
 //  This completely bypasses Xcode so you can test the actual Forth engine
 //  while we sort out the Xcode 26.5 build service crashes.
@@ -128,11 +131,11 @@ hello
 """
 
     do {
-        try blockSrc.write(to: fblock, atomically: true, encoding: .utf8)
-        try stopSrc.write(to: fstop, atomically: true, encoding: .utf8)
-        try echoSrc.write(to: fecho, atomically: true, encoding: .utf8)
-        try debugSrc.write(to: fdebug, atomically: true, encoding: .utf8)
-        try dotqSrc.write(to: fdotq, atomically: true, encoding: .utf8)
+        try blockSrc.write(to: fblock, atomically: true, encoding: String.Encoding.utf8)
+        try stopSrc.write(to: fstop, atomically: true, encoding: String.Encoding.utf8)
+        try echoSrc.write(to: fecho, atomically: true, encoding: String.Encoding.utf8)
+        try debugSrc.write(to: fdebug, atomically: true, encoding: String.Encoding.utf8)
+        try dotqSrc.write(to: fdotq, atomically: true, encoding: String.Encoding.utf8)
     } catch {
         print("TEST write fail: \(error)")
         exit(1)
@@ -369,7 +372,7 @@ hello
     // some Core Extensions). Each test uses feedLine + output/stack inspection.
     // We deliberately avoid destructive global side-effects where possible or recover via resetTest.
     print("=== Starting expanded ANS 2012 Core word tests ===")
-    forth.feedLine("VARIABLE t6mem")   // safe cell for memory tests (won't corrupt DP_ADDR)
+    forth.feedLine("VARIABLE t6mem 256 ALLOT")   // safe cell + extra buffer space for memory tests (MOVE/FILL use offsets to avoid low system-var addrs)
     var ansPassed = 0
     var ansTotal = 0
     func ansTest(_ desc: String, _ line: String, _ expectedSubstring: String) {
@@ -390,6 +393,14 @@ hello
     ansTest("-", "10 3 - .", "7")
     ansTest("*", "6 7 * .", "42")
     ansTest("/MOD", "10 3 /MOD . .", "3 1")  // quot rem (top=quot per impl+standard)
+    ansTest("/", "10 3 / .", "3")
+    ansTest("*/MOD", "10 3 4 */MOD . .", "7 2")  // 30 /4 =7 rem 2 , . . gives quot rem
+    ansTest("M*", "1000 1000 M* . .", "0 1000000")
+    ansTest("FM/MOD", "10 0 3 FM/MOD . .", "3 1")
+    ansTest("SM/REM", "10 0 3 SM/REM . .", "3 1")
+    ansTest("U<", "1 2 U< .", "-1")
+    ansTest("UM*", "100 100 UM* . .", "0 10000")
+    ansTest("UM/MOD", "0 100 10 UM/MOD . .", "10 0")
     ansTest("MOD", "10 3 MOD .", "1")
     ansTest("1+", "41 1+ .", "42")
     ansTest("1-", "43 1- .", "42")
@@ -435,11 +446,18 @@ hello
     ansTest(">R R>", "42 >R R> .", "42")
     ansTest("R@", "99 >R R@ R> DROP .", "99")
     ansTest("2>R 2R>", "1 2 2>R 2R> . .", "2 1")
+    ansTest("2DROP", "1 2 3 4 2DROP . .", "2 1")
+    ansTest("2DUP", "1 2 2DUP . . . .", "2 1 2 1")
+    ansTest("2OVER", "1 2 3 4 2OVER . . . .", "2 1 4 3")
+    ansTest("2SWAP", "1 2 3 4 2SWAP . . . .", "2 1 4 3")
 
     // Memory (6.1.0650 etc.)
     // Use t6mem (defined early) to avoid corrupting the live DP_ADDR / HERE value
     ansTest("! @", "123 t6mem ! t6mem @ .", "123")
     ansTest("C! C@", "65 t6mem C! t6mem C@ .", "65")
+    ansTest("+!", "0 t6mem ! 5 t6mem +! t6mem @ .", "5")
+    ansTest("FILL", "t6mem 3 65 FILL t6mem C@ .", "65")
+    ansTest("MOVE", "t6mem 8 + 3 66 FILL t6mem 16 + 3 0 FILL t6mem 8 + t6mem 16 + 3 MOVE t6mem 16 + C@ .", "66")
     ansTest(",", "42 , 43 .", "43")
     // ALLOT tested indirectly via , behavior
 
@@ -454,11 +472,21 @@ hello
     ansTest("U.", "123 U.", "123")
     ansTest("SPACES", "3 SPACES 42 .", "42")  // hard to count spaces but no crash + output
 
+    // Pictured numeric output (core)
+    ansTest("<# #S #>", "123 S>D <# #S #> TYPE", "123")
+    ansTest("SIGN", "0 0 0 <# SIGN #S #> TYPE", "0")
+
+    // S"
+    ansTest("S\"", "S\" HELLO\" TYPE", "HELLO")
+
     // Control structures (via temp definitions; some coverage in 2d/2f)
     ansTest("IF ELSE THEN", ": t6if 5 0= IF 99 ELSE 88 THEN ; t6if .", "88")
     ansTest("BEGIN UNTIL", ": t6until 0 BEGIN 1+ DUP 3 > UNTIL ; t6until .", "4")
     ansTest("DO LOOP I", ": t6do 0 3 0 DO I + LOOP ; t6do .", "3")  // 0+1+2
     ansTest("?DO +LOOP UNLOOP LEAVE", ": t6dop 0 5 0 ?DO 1+ LOOP ; t6dop .", "5")
+    ansTest("J", ": t6j 0 2 0 DO 0 2 0 DO J + LOOP LOOP ; t6j .", "2")  // 0+0 +1+1 =2
+    ansTest("RECURSE", ": t6rec 1- DUP 0= IF DROP 99 ELSE RECURSE THEN ; 5 t6rec .", "99")
+    ansTest("EXECUTE", "3 4 ' + EXECUTE .", "7")
 
     // Dictionary / introspection (current words)
     ansTest(">HEADER >NFA ID.", "VARIABLE t6v ' t6v >NFA COUNT TYPE", "t6v")  // name printed
@@ -466,12 +494,22 @@ hello
     ansTest("HERE (value) DP", "HERE DP @ = .", "-1")  // they should match per current impl
     ansTest("LATEST", "LATEST @ 0= 0= .", "-1")  // at least non-zero after bootstrap
     ansTest("DEPTH", "1 2 3 DEPTH .", "3")
+    ansTest("[']", ": t6p ['] DUP ; ' DUP t6p = .", "-1")
 
     // TYPE COUNT WORD (more coverage)
     ansTest("COUNT TYPE via WORD", "32 WORD HELLO COUNT TYPE", "HELLO")
 
     // 2@ 2! etc. (use safe non-HERE to avoid prior side effects on DP)
     ansTest("ARSHIFT", "-8 1 ARSHIFT .", "-4")
+
+    // New batch: >IN >NUMBER ABORT ABORT" ACCEPT ENVIRONMENT? EVALUATE FIND
+    ansTest(">IN", "0 >IN ! >IN @ .", "0")
+    ansTest(">NUMBER", "0 0 S\" 123\" >NUMBER 2DROP DROP .", "123")
+    ansTest("EVALUATE", "S\" 3 4 +\" EVALUATE .", "7")
+    ansTest("FIND", "32 WORD DUP FIND SWAP DROP 0= 0= .", "-1")
+    ansTest("FIND not", "32 WORD NOPE FIND 0= .", "-1")
+    ansTest("ACCEPT basic", "HERE 0 ACCEPT .", "0")
+    ansTest("ABORT\" no", "0 ABORT\" oops\" 42 .", "42")
 
     // Check a few more that should be present and not crash
     ansTest("CLS (no crash)", "CLS 42 .", "42")

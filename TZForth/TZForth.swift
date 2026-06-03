@@ -80,12 +80,13 @@ public final class TZForth {
     private var memory: [UInt8]
 
     // System variables live at the bottom of memory (classic layout)
-    private var LATEST:  Int { 0 }
-    private var DP_ADDR: Int { 8 }   // address of the DP variable (the cell holding the current dictionary pointer value)
+    internal var LATEST:  Int { 0 }  // internal so TZForthTests.swift (and combined.swift for FTEST) can access for runANSValidation snapshots
+    internal var DP_ADDR: Int { 8 }   // address of the DP variable (the cell holding the current dictionary pointer value); internal for test harness in TZForthTests.swift
     private var STATE:   Int { 16 }
     private var BASE:    Int { 24 }
     private var SP:      Int { 32 }   // address for future "SP @" compatibility (the live pointer is in the Swift var below)
     private var RSP:     Int { 40 }
+    internal var IN:       Int { 48 }   // >IN ( -- addr )  current offset in input source; internal for tests
 
     private var stackBase: Int
     private var rstackBase: Int
@@ -239,6 +240,15 @@ public final class TZForth {
         ("-",       "( n1 n2 -- n )",     "subtraction"),
         ("*",       "( n1 n2 -- n )",     "multiplication"),
         ("/MOD",    "( n1 n2 -- rem quot )", "remainder and quotient"),
+        ("/",       "( n1 n2 -- quot )",  "division (quotient)"),
+        ("*/MOD",   "( n1 n2 n3 -- rem quot )", "multiply then divmod"),
+        ("M*",      "( n1 n2 -- d )",     "signed double multiply (low high)"),
+        ("FM/MOD",  "( d n -- rem quot )", "floored divmod"),
+        ("SM/REM",  "( d n -- rem quot )", "symmetric divmod"),
+        ("U<",      "( u1 u2 -- flag )",  "unsigned less"),
+        ("UM*",     "( u1 u2 -- ud )",    "unsigned double multiply"),
+        ("UM/MOD",  "( ud u -- rem quot )", "unsigned divmod"),
+        ("+!",      "( n addr -- )",      "add to memory"),
         ("1+",      "( n -- n+1 )",       "increment"),
         ("1-",      "( n -- n-1 )",       "decrement"),
         ("ABS",     "( n -- u )",         "absolute value"),
@@ -276,8 +286,15 @@ public final class TZForth {
         ("BASE",    "( -- addr )",        "current numeric base variable"),
         ("SP",      "( -- addr )",        "data stack pointer (SP @ for compatibility)"),
         ("RSP",     "( -- addr )",        "return stack pointer (RSP @ for compatibility)"),
+        (">IN",     "( -- addr )",        "current input pointer variable ( >IN @ for offset)"),
+        (">NUMBER", "( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )", "convert string digits to number accumulating in ud"),
         ("ALLOT",   "( n -- )",           "allocate n bytes in dictionary"),
         (",",       "( n -- )",           "compile a cell"),
+        ("FILL",    "( addr u b -- )",    "fill u bytes at addr with b"),
+        ("MOVE",    "( addr1 addr2 u -- )", "copy u bytes"),
+        ("ALIGN",   "( -- )",             "align DP to cell boundary"),
+        ("ALIGNED", "( addr -- addr' )",  "next aligned address"),
+        (">BODY",   "( xt -- addr )",     "data field of a CREATEd word"),
         ("C,",      "( b -- )",           "compile a byte"),
         
         // Output / Input
@@ -290,6 +307,16 @@ public final class TZForth {
         ("KEY?",    "( -- flag )",        "true if a key is available now"),
         ("TYPE",    "( addr len -- )",    "print len characters from addr"),
         ("U.",      "( u -- )",           "print unsigned number"),
+        ("ABORT",   "( -- )",             "clear stacks, return to interpreter"),
+        ("ABORT\"", "( flag \"text\" -- )", "if flag, type message and ABORT (immediate)"),
+        ("ACCEPT",  "( c-addr +n1 -- +n2 )", "read up to n1 chars from input into buffer"),
+        ("<#",      "( -- )",             "begin pictured numeric output"),
+        ("#",       "( ud -- ud )",       "add one digit to pictured output"),
+        ("#S",      "( ud -- ud )",       "add all remaining digits to pictured"),
+        ("#>",      "( ud -- c-addr u )", "end pictured numeric, return string"),
+        ("HOLD",    "( char -- )",        "insert char into pictured output"),
+        ("SIGN",    "( n -- )",           "insert minus sign if n<0 into pictured"),
+        ("S\"",     "( -- c-addr u )",    "compile/interpret \"-delimited string (leaves addr u)"),
         
         // Comparisons
         ("=",       "( n1 n2 -- flag )",  "equal?"),
@@ -303,6 +330,11 @@ public final class TZForth {
         ("SEE",     "( -- name )",        "decompile a word"),
         ("HELP",    "( -- ) name",        "show help for a word"),
         ("' ",      "( -- xt ) name",     "tick: get execution token of name"),
+        ("EXECUTE", "( xt -- )",          "execute the word with the given xt"),
+        ("EVALUATE","( i*x c-addr u -- j*x )", "interpret the string as Forth source"),
+        ("ENVIRONMENT?","( c-addr u -- false | i*x true )", "query environment string"),
+        (">NUMBER", "( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )", "convert string digits to number accumulating in ud"),
+        ("FIND",    "( c-addr -- c-addr 0 | xt 1 | xt -1 )", "find word from counted string (from WORD)"),
         ("FORGET",  "( -- ) name",        "forget name and all words defined after it"),
         ("FORGET-WORD", "( xt -- )",      "forget using xt ( ' NAME FORGET-WORD )"),
         (">HEADER", "( xt -- header )",   "convert xt to header (starts with link field; name count+text at +8/+9)"),
@@ -313,6 +345,7 @@ public final class TZForth {
         ("CONSTANT","( n -- ) name",      "create a constant"),
         ("CREATE",  "( -- ) name",        "create a word that pushes its data field address (for use with DOES>)"),
         ("DOES>",   "( -- )",             "modify last CREATE'd word to execute the following code with data addr on stack (immediate)"),
+        ("IMMEDIATE","( -- )",            "mark latest word as immediate"),
         ("TRUE",    "( -- -1 )",          "true flag"),
         ("FALSE",   "( -- 0 )",           "false flag"),
         ("BL",      "( -- 32 )",          "blank character (space)"),
@@ -334,6 +367,7 @@ public final class TZForth {
         // Control flow (many are immediate)
         (":",       "( -- ) name",        "start colon definition"),
         (";",       "( -- )",             "end colon definition (immediate)"),
+        ("RECURSE", "( -- )",             "recurse into current definition (immediate)"),
         ("[",       "( -- )",             "enter interpret mode (immediate)"),
         ("]",       "( -- )",             "enter compile mode"),
         ("BEGIN",   "( -- )",             "start indefinite loop (immediate)"),
@@ -351,6 +385,7 @@ public final class TZForth {
         ("DO",      "( limit start -- )", "start counted loop"),
         ("LOOP",    "( -- )",             "end DO loop (add 1 to index, branch back if < limit)"),
         ("I",       "( -- n )",           "current DO loop index"),
+        ("J",       "( -- n )",           "outer DO loop index (for nested loops)"),
         ("UNLOOP",  "( -- )",             "discard current DO loop params from rstack"),
         ("LEAVE",   "( -- )",             "exit current DO loop (branch to after LOOP)"),
         ("?DO",     "( limit start -- )", "start counted loop that skips if start==limit"),
@@ -379,6 +414,11 @@ public final class TZForth {
         ("2>R",     "( n1 n2 -- ) (R: -- )", "two to return stack"),
         ("2R>",     "( -- n1 n2 ) (R: -- )", "two from return stack"),
         ("2R@",     "( -- n1 n2 ) (R: -- )", "copy two from return stack"),
+        ("2DROP",   "( n1 n2 -- )",       "drop two items"),
+        ("2DUP",    "( n1 n2 -- n1 n2 n1 n2 )", "duplicate pair"),
+        ("2OVER",   "( n1 n2 n3 n4 -- n1 n2 n3 n4 n1 n2 )", "copy second pair"),
+        ("2SWAP",   "( n1 n2 n3 n4 -- n3 n4 n1 n2 )", "swap pairs"),
+        ("S>D",     "( n -- d )",         "sign extend single to double"),
         ("U.",      "( u -- )",           "print unsigned"),
         ("EMIT",    "( c -- )",           "emit character"),
         ("TYPE",    "( addr len -- )",    "type string"),
@@ -435,6 +475,14 @@ public final class TZForth {
     // The address of the QUIT word's threaded code (for restarting the outer loop)
     private var quitCodeAddress: Int = 0
 
+    // Pictured numeric output (<# # #S #> HOLD SIGN) support
+    private let PNO_BUFFER_SIZE = 128
+    private var pnoBufferAddr: Int = 0
+    private var pnoPtr: Int = 0
+
+    private var sQuoteID: Cell = 0   // runtime for (S") used by S" to embed compact string literals that leave c-addr u
+    private var abortQuoteID: Cell = 0  // runtime for (ABORT")
+
     // MARK: - Init
 
     public init() {
@@ -449,6 +497,7 @@ public final class TZForth {
         writeCell(DP_ADDR, rstackBase + RSTACK_SIZE * CELL_SIZE)   // initial value of the dictionary pointer (stored at DP_ADDR)
         writeCell(STATE, 0)
         writeCell(BASE, 10)
+        writeCell(IN, 0)
 
         // Live stack depths live in Swift vars (corruption-proof).
         // We still write the old fixed locations for any future raw memory inspection or "SP @" compatibility.
@@ -475,6 +524,10 @@ public final class TZForth {
 
         // Initial logical cwd (host may override via setup or after scoped chdirs)
         logicalCurrentDirectory = FileManager.default.currentDirectoryPath
+
+        // Pictured numeric output buffer (high in mem, away from growing dictionary)
+        pnoBufferAddr = MEM_SIZE - PNO_BUFFER_SIZE
+        pnoPtr = pnoBufferAddr + PNO_BUFFER_SIZE
 
         // === Strong diagnostic after registration ===
         print("=== TZForth INIT DIAGNOSTICS ===")
@@ -507,7 +560,7 @@ public final class TZForth {
 
     // MARK: - Low-level memory
 
-    private func readCell(_ addr: Int) -> Cell {
+    internal func readCell(_ addr: Int) -> Cell {  // internal to allow access from TZForthTests.swift extension for ANS validation
         if addr < 0 || addr + 8 > memory.count {
             tell("? Memory read out of range (addr=\(addr))\n")
             errorFlag = true
@@ -516,7 +569,7 @@ public final class TZForth {
         return memory.withUnsafeBytes { $0.load(fromByteOffset: addr, as: Cell.self) }
     }
 
-    private func writeCell(_ addr: Int, _ value: Cell) {
+    internal func writeCell(_ addr: Int, _ value: Cell) {  // internal to allow access from TZForthTests.swift extension for ANS validation restore
         if addr < 0 || addr + 8 > memory.count {
             tell("? Memory write out of range (addr=\(addr))\n")
             errorFlag = true
@@ -630,6 +683,19 @@ public final class TZForth {
             let u = UInt64(bitPattern: Int64(n))
             return String(u, radix: b).uppercased()
         }
+    }
+
+    // Pictured numeric output helpers (build string backwards in pno buffer)
+    private func startPictured() {
+        pnoPtr = pnoBufferAddr + PNO_BUFFER_SIZE
+    }
+
+    private func picturedAddDigit(_ digit: Cell) {
+        if pnoPtr <= pnoBufferAddr { return }
+        pnoPtr -= 1
+        let b = max(2, min(36, readCell(BASE)))
+        let ch: UInt8 = (digit < 10) ? UInt8(48 + digit) : UInt8(55 + digit)  // 0-9, A-Z
+        writeByte(pnoPtr, ch)
     }
 
     // MARK: - Output
@@ -1185,6 +1251,36 @@ public final class TZForth {
             self.ip = newIP
         }
 
+        // Runtime for S" : like (.") but leaves c-addr u on stack instead of printing.
+        sQuoteID = register("(S\\\")") {
+            let strAddr = self.ip
+            let len = Int(self.readByte(strAddr))
+            let charAddr = strAddr + 1
+            self.push(Cell(charAddr))
+            self.push(Cell(len))
+            var newIP = self.ip + 1 + len
+            while (newIP & 7) != 0 { newIP += 1 }
+            self.ip = newIP
+        }
+
+        // Runtime for ABORT" : if flag on stack, type the inline string then ABORT (reset).
+        self.abortQuoteID = register("(ABORT\\\")") {
+            let flag = self.pop()
+            let strAddr = self.ip
+            let len = Int(self.readByte(strAddr))
+            if flag != 0 {
+                for i in 0..<len {
+                    self.putkey(self.readByte(strAddr + 1 + i))
+                }
+                self.putkey(10) // nl?
+                self.resetRuntimeState()
+                self.errorFlag = true  // so outer can see abort
+            }
+            var newIP = self.ip + 1 + len
+            while (newIP & 7) != 0 { newIP += 1 }
+            self.ip = newIP
+        }
+
         // Now safe to define the rest
         _ = register("EXIT") { /* already implemented above */ }
 
@@ -1202,6 +1298,61 @@ public final class TZForth {
                 self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); self.push(0); return
             }
             self.push(a % b); self.push(a / b)
+        }
+        _ = register("/")     {
+            let b = self.pop(); let a = self.pop()
+            if b == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); return }
+            self.push(a / b)
+        }
+        _ = register("*/MOD") {
+            let n3 = self.pop(); let n2 = self.pop(); let n1 = self.pop()
+            if n3 == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); self.push(0); return }
+            let prod = n1 * n2
+            self.push( prod % n3 ); self.push( prod / n3 )
+        }
+        _ = register("M*") {
+            let b = self.pop(); let a = self.pop()
+            let prod = Int64(a) * Int64(b)
+            self.push( Cell( prod & 0xffffffff ) )
+            self.push( Cell( (prod >> 32) & 0xffffffff ) )
+        }
+        _ = register("FM/MOD") {
+            let n = self.pop(); let dlow = self.pop(); let dhigh = self.pop()
+            let d = (dhigh << 32) | (dlow & 0xffffffff)
+            if n == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); self.push(0); return }
+            var quot = d / n
+            var rem = d % n
+            if (rem < 0) != (n < 0) && rem != 0 { rem += n; quot -= (n > 0 ? 1 : -1) }
+            self.push(rem); self.push(quot)
+        }
+        _ = register("SM/REM") {
+            let n = self.pop(); let dlow = self.pop(); let dhigh = self.pop()
+            let d = (dhigh << 32) | (dlow & 0xffffffff)
+            if n == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); self.push(0); return }
+            self.push( d % n ); self.push( d / n )
+        }
+        _ = register("U<") { let b = self.pop(); let a = self.pop(); let ua = UInt64( bitPattern: Int64(a) ); let ub = UInt64( bitPattern: Int64(b) ); self.push( ua < ub ? -1 : 0 ) }
+        _ = register("UM*") {
+            let b = self.pop(); let a = self.pop()
+            let ua = UInt64( bitPattern: Int64(a) )
+            let ub = UInt64( bitPattern: Int64(b) )
+            let prod = ua * ub
+            self.push( Cell( prod & 0xffffffff ) )
+            self.push( Cell( (prod >> 32) & 0xffffffff ) )
+        }
+        _ = register("UM/MOD") {
+            let u = self.pop(); let dlow = self.pop(); let dhigh = self.pop()
+            let d = (UInt64( bitPattern: Int64(dhigh) ) << 32) | UInt64( bitPattern: Int64(dlow) )
+            if u == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); self.push(0); return }
+            let uu = UInt64( bitPattern: Int64(u) )
+            let quot = d / uu
+            let rem = d % uu
+            self.push( Cell( rem & 0xffffffff ) ); self.push( Cell( quot & 0xffffffff ) )
+        }
+        _ = register("+!") {
+            let addr = Int(self.pop()); let n = self.pop()
+            let old = self.readCell(addr)
+            self.writeCell(addr, old + n)
         }
 
         _ = register(".")     { 
@@ -1261,6 +1412,7 @@ public final class TZForth {
         _ = register("BASE")  { self.push( Cell( self.BASE ) ) }
         _ = register("SP")    { self.push( Cell( self.SP ) ) }
         _ = register("RSP")   { self.push( Cell( self.RSP ) ) }
+        _ = register(">IN")   { self.push( Cell( self.IN ) ) }
 
         // >HEADER ( xt -- header )  Given a code field address (xt), return the
         // start of its dictionary header (the link field address).  This is the
@@ -1286,6 +1438,47 @@ public final class TZForth {
 
         _ = register("]", immediate: false) { self.writeCell(self.STATE, 1) }
         _ = register("[", immediate: true)  { self.writeCell(self.STATE, 0) }
+
+        _ = register("IMMEDIATE") {
+            let l = self.readCell(self.LATEST)
+            if l == 0 { self.tell("? No latest word\n"); self.errorFlag = true; return }
+            let fl = self.readByte( Int(l) + 8 )
+            self.writeByte( Int(l) + 8 , fl | self.FLAG_IMMEDIATE )
+        }
+
+        _ = register("LITERAL", immediate: true) {
+            if self.readCell(self.STATE) == 0 { self.tell("? LITERAL only while compiling\n"); self.errorFlag = true; return }
+            let n = self.pop()
+            self.push(self.litID); self.comma()
+            self.push(n); self.comma()
+        }
+
+        _ = register("[CHAR]", immediate: true) {
+            if self.readCell(self.STATE) == 0 { self.tell("? [CHAR] only while compiling\n"); self.errorFlag = true; return }
+            let name = self.parseWord()
+            if name.isEmpty { self.tell("? [CHAR] needs char\n"); self.errorFlag = true; return }
+            let c = Cell( name.utf8.first ?? 0 )
+            self.push(self.litID); self.comma()
+            self.push(c); self.comma()
+        }
+
+        _ = register("[']", immediate: true) {
+            if self.readCell(self.STATE) == 0 { self.tell("? ['] only while compiling\n"); self.errorFlag = true; return }
+            let name = self.parseWord()
+            if name.isEmpty { self.tell("? ['] needs name\n"); self.errorFlag = true; return }
+            let hdr = self.findWord(name)
+            if hdr == 0 { self.tell("? ['] ? " + name + "\n"); self.errorFlag = true; return }
+            let cfa = self.getCFA(hdr)
+            let firstCell = self.readCell(Int(cfa))
+            let xt: Cell
+            if firstCell < Cell(self.MAX_BUILTIN_ID) && firstCell != self.docolID {
+                xt = firstCell
+            } else {
+                xt = cfa
+            }
+            self.push(self.litID); self.comma()
+            self.push(xt); self.comma()
+        }
 
         // : and ; are special because they affect STATE and compile DOCOL / EXIT
         _ = register(":") {
@@ -1316,6 +1509,28 @@ public final class TZForth {
 
             self.writeCell(self.STATE, 0)
             self.loopControlStack.removeAll()  // clean any leftover from unbalanced loops in this def
+        }
+
+        // RECURSE ( -- )  immediate: compile a call to the current definition (for recursion)
+        _ = register("RECURSE", immediate: true) {
+            if self.readCell(self.STATE) == 0 {
+                self.tell("? RECURSE only allowed while compiling a word\n")
+                self.errorFlag = true
+                return
+            }
+            let latest = self.readCell(self.LATEST)
+            if latest == 0 {
+                self.tell("? RECURSE with no current definition\n")
+                self.errorFlag = true
+                return
+            }
+            let cfa = self.getCFA(latest)
+            let first = self.readCell(Int(cfa))
+            if first < Cell(self.MAX_BUILTIN_ID) && first != self.docolID {
+                self.push(first); self.comma()
+            } else {
+                self.push(cfa); self.comma()
+            }
         }
 
         // A few more essentials
@@ -1561,6 +1776,106 @@ public final class TZForth {
             }
         }
 
+        // EXECUTE ( xt -- )
+        // xt may be a primitive ID (small number from ' on prim) or a CFA address.
+        // Delegates to the internal execute() which handles both cases (prim dispatch or threaded).
+        _ = register("EXECUTE") {
+            let xt = self.pop()
+            if xt < Cell(self.MAX_BUILTIN_ID) {
+                // primitive ID case (as pushed by ' on primitives)
+                self.execute(cfa: xt, firstCell: xt)
+            } else {
+                let cfa = xt
+                let firstCell = self.readCell(Int(cfa))
+                self.execute(cfa: cfa, firstCell: firstCell)
+            }
+        }
+
+        // FIND ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+        // c-addr is counted string (as from WORD). Returns 0 + orig if not found,
+        // or xt and flag (+1 immediate, -1 not) if found. Uses same xt logic as ' .
+        _ = register("FIND") {
+            let caddr = Int(self.pop())
+            let len = Int(self.readByte(caddr))
+            var nameBytes: [UInt8] = []
+            for i in 0..<len {
+                nameBytes.append(self.readByte(caddr + 1 + i))
+            }
+            let name = String(bytes: nameBytes, encoding: .utf8) ?? ""
+            let hdr = self.findWord(name)
+            if hdr == 0 {
+                self.push(Cell(caddr))
+                self.push(0)
+                return
+            }
+            let cfa = self.getCFA(hdr)
+            let firstCell = self.readCell(Int(cfa))
+            let xt: Cell
+            if firstCell < Cell(self.MAX_BUILTIN_ID) && firstCell != self.docolID {
+                xt = firstCell
+            } else {
+                xt = cfa
+            }
+            let flagsLen = self.readByte(Int(hdr) + 8)
+            let isImmediate = (flagsLen & self.FLAG_IMMEDIATE) != 0
+            self.push(xt)
+            self.push(isImmediate ? 1 : -1)
+        }
+
+        // EVALUATE ( i*x c-addr u -- j*x )
+        // Temporarily replace input queue with the string (as if fed), run interpreter,
+        // restore previous input and >IN. Supports nested eval, compile etc.
+        _ = register("EVALUATE") {
+            let u = Int(self.pop())
+            let caddr = Int(self.pop())
+            let savedQueue = self.inputQueue
+            let savedIN = self.readCell(self.IN)
+            self.inputQueue = []
+            for i in 0..<u {
+                self.inputQueue.append( self.readByte(caddr + i) )
+            }
+            self.inputQueue.append(10) // \n
+            self.writeCell(self.IN, 0)
+            self.runInterpreter()
+            // if error during eval, leave errorFlag for outer to see (like in load)
+            self.inputQueue = savedQueue
+            self.writeCell(self.IN, savedIN)
+        }
+
+        // ABORT ( -- )  clear stacks and return to interpreter (reset state)
+        _ = register("ABORT") {
+            self.resetRuntimeState()
+        }
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        // Convert as many digits as possible in current BASE from the string,
+        // accumulating into ud (unsigned double). Returns updated ud and remaining string.
+        _ = register(">NUMBER") {
+            let u1 = Int(self.pop())
+            let caddr1 = Int(self.pop())
+            let udHigh = self.pop()
+            let udLow = self.pop()
+            var ud = (UInt64(bitPattern: Int64(udHigh)) << 32) | UInt64(bitPattern: Int64(udLow))
+            let b = max(2, min(36, self.readCell(self.BASE)))
+            var i = 0
+            while i < u1 {
+                let ch = self.readByte(caddr1 + i)
+                var d = -1
+                if ch >= 48 && ch <= 57 { d = Int(ch) - 48 }
+                else if ch >= 65 && ch <= 90 { d = 10 + Int(ch) - 65 }
+                else if ch >= 97 && ch <= 122 { d = 10 + Int(ch) - 97 }
+                if d < 0 || d >= b { break }
+                ud = ud * UInt64(b) + UInt64(d)
+                i += 1
+            }
+            let newHigh = Cell( (ud >> 32) & 0xffffffff )
+            let newLow = Cell( ud & 0xffffffff )
+            self.push(newLow)
+            self.push(newHigh)
+            self.push( Cell(caddr1 + i) )
+            self.push( Cell(u1 - i) )
+        }
+
         // ( comment ) — classic and essential
         _ = register("(", immediate: true) {
             // Eat characters until we see )
@@ -1677,6 +1992,13 @@ public final class TZForth {
             self.push(n1); self.push(n2)
         }
 
+        _ = register("2DROP") { _ = self.pop(); _ = self.pop() }
+        _ = register("2DUP")  { let b = self.pop(); let a = self.pop(); self.push(a); self.push(b); self.push(a); self.push(b) }
+        _ = register("2OVER") { let d = self.pop(); let c = self.pop(); let b = self.pop(); let a = self.pop(); self.push(a); self.push(b); self.push(c); self.push(d); self.push(a); self.push(b) }
+        _ = register("2SWAP") { let d = self.pop(); let c = self.pop(); let b = self.pop(); let a = self.pop(); self.push(c); self.push(d); self.push(a); self.push(b) }
+
+        _ = register("S>D") { let n = self.pop(); self.push(n); self.push( n < 0 ? -1 : 0 ) }
+
         _ = register("PICK") {
             let n = Int(self.pop())
             if n < 0 { self.push(0); return }
@@ -1745,6 +2067,58 @@ public final class TZForth {
             }
         }
 
+        // Pictured numeric output (core)
+        _ = register("<#") { self.startPictured() }
+        _ = register("#") {
+            let high = self.pop()
+            let low = self.pop()
+            let b = max(2, min(36, self.readCell(self.BASE)))
+            var ud = (UInt64(bitPattern: Int64(high)) << 32) | UInt64(bitPattern: Int64(low))
+            let digit = ud % UInt64(b)
+            ud /= UInt64(b)
+            let nh = Cell( (ud >> 32) & 0xffffffff )
+            let nl = Cell( ud & 0xffffffff )
+            self.push(nl); self.push(nh)
+            self.picturedAddDigit( Cell(digit) )
+        }
+        _ = register("#S") {
+            let high = self.pop()
+            let low = self.pop()
+            let b = max(2, min(36, self.readCell(self.BASE)))
+            var ud = (UInt64(bitPattern: Int64(high)) << 32) | UInt64(bitPattern: Int64(low))
+            repeat {
+                let digit = ud % UInt64(b)
+                ud /= UInt64(b)
+                self.picturedAddDigit( Cell(digit) )
+            } while ud != 0
+            let nh = Cell( (ud >> 32) & 0xffffffff )
+            let nl = Cell( ud & 0xffffffff )
+            self.push(nl); self.push(nh)
+        }
+        _ = register("#>") {
+            _ = self.pop()
+            _ = self.pop()  // ud consumed (not used)
+            let end = self.pnoBufferAddr + self.PNO_BUFFER_SIZE
+            let u = end - self.pnoPtr
+            self.push( Cell(self.pnoPtr) )
+            self.push( Cell(u) )
+        }
+        _ = register("HOLD") {
+            let ch = UInt8( self.pop() & 0xff )
+            if self.pnoPtr > self.pnoBufferAddr {
+                self.pnoPtr -= 1
+                self.writeByte(self.pnoPtr, ch)
+            }
+        }
+        _ = register("SIGN") {
+            if self.pop() < 0 {
+                if self.pnoPtr > self.pnoBufferAddr {
+                    self.pnoPtr -= 1
+                    self.writeByte(self.pnoPtr, 45) // '-'
+                }
+            }
+        }
+
         _ = register("MOD") {
             let b = self.pop(); let a = self.pop()
             if b == 0 { self.tell("? Division by zero\n"); self.errorFlag = true; self.push(0); return }
@@ -1752,6 +2126,36 @@ public final class TZForth {
         }
 
         _ = register("ALLOT") { let n = self.pop(); let h = self.readCell(self.DP_ADDR); self.writeCell(self.DP_ADDR, h + n) }
+
+        _ = register("FILL") {
+            let b = UInt8( self.pop() & 0xff ); let u = Int(self.pop()); let addr = Int(self.pop())
+            for i in 0..<u { self.writeByte( addr + i , b ) }
+        }
+        _ = register("MOVE") {
+            let u = Int(self.pop()); let dst = Int(self.pop()); let src = Int(self.pop())
+            if u <= 0 { return }
+            if dst < src {
+                for i in 0..<u { self.writeByte( dst + i , self.readByte(src + i) ) }
+            } else {
+                for i in (0..<u).reversed() { self.writeByte( dst + i , self.readByte(src + i) ) }
+            }
+        }
+        _ = register("ALIGN") {
+            var h = self.readCell(self.DP_ADDR)
+            while (h & 7) != 0 { h += 1 }
+            self.writeCell(self.DP_ADDR, h)
+        }
+        _ = register("ALIGNED") {
+            var a = self.pop()
+            while (a & 7) != 0 { a += 1 }
+            self.push(a)
+        }
+        _ = register(">BODY") {
+            // xt of CREATE/VARIABLE child; the data addr value is compiled at cfa+16 (after docol/lit)
+            let xt = self.pop()
+            let dataAddr = self.readCell( Int(xt) + 16 )
+            self.push( dataAddr )
+        }
 
         _ = register("CHAR") {
             let addr = self.parseToWordBuffer(using: 32)
@@ -1866,6 +2270,20 @@ public final class TZForth {
                 return
             }
             self.push( self.readCell( self.rstackBase + (rs - 2) * 8 ) )
+        }
+
+        // J -- outer loop index in nested DO loops
+        // rstack layout for nested: ... outer_limit outer_index inner_limit inner_index(top)
+        // I is at rs-2, J (outer index) at rs-4
+        _ = register("J") {
+            let rs = self.rspGet()
+            if rs < 4 {
+                self.tell("? Return stack underflow\n")
+                self.errorFlag = true
+                self.push(0)
+                return
+            }
+            self.push( self.readCell( self.rstackBase + (rs - 4) * 8 ) )
         }
 
         // UNLOOP -- drop the current loop's limit+index from rstack (no branch)
@@ -2219,6 +2637,7 @@ public final class TZForth {
         // ANS-VALIDATE — run the 2012 ANS Forth Core + Core Ext validation tests (ported
         // from the TestTZForth FTEST harness, originally TestLBForth.swift) and write detailed results to ANS-VALIDATE.txt
         // in the folder containing the TestTZForth.swift (i.e. next to the tests source).
+        // The runner impl is in TZForthTests.swift (split for file size); sources/lets remain here.
         // Internally we respect the Leif Bruder lbForth origins of the test logic.
         // The tests exercise many current words against their standard stack effects and
         // behaviors. Results are also returned on the stack as a counted string for inspection.
@@ -2317,6 +2736,100 @@ public final class TZForth {
                 for i in 0..<len {
                     self.putkey( self.readByte( saddr + i ) )
                 }
+            }
+        }
+
+        // ABORT"  immediate — if flag, print the delimited text and ABORT.
+        // Similar to ."
+        _ = register("ABORT\"", immediate: true) {
+            let caddr = self.parseToWordBuffer(using: 34)
+            if !self.inputQueue.isEmpty && self.inputQueue.first == 34 {
+                _ = self.inputQueue.removeFirst()
+            }
+            var len = Int( self.readByte( Int(caddr) ) )
+            var saddr = Int(caddr) + 1
+            if len > 0 && self.readByte(saddr) <= 32 {
+                saddr += 1
+                len -= 1
+            }
+            if self.readCell(self.STATE) != 0 {
+                self.push(self.abortQuoteID); self.comma()
+                self.writeByteHere(UInt8(len))
+                for i in 0..<len {
+                    self.writeByteHere( self.readByte(saddr + i) )
+                }
+                self.alignHere()
+            } else {
+                // Interpret: check flag on stack? Standard ABORT" ( flag -- )
+                // Wait, in interp, the flag is before the ABORT" word.
+                // But parse consumed the string. The flag should have been pushed before calling ABORT".
+                // So in interp path, flag is already on stack before this? No: the word ABORT" when executed in interp pops the flag.
+                // In our case, since immediate always executes the body.
+                // For interp: we need the flag to be on stack when ABORT" runs.
+                // But the string parse happens, then we pop flag here? Standard is flag is on stack, then ABORT" parses string at compile or runtime?
+                // In interp, user does: flag ABORT" msg"
+                // So when executing ABORT", flag is on stack, then ABORT" body runs, parses the "msg" from queue.
+                let flag = self.pop()
+                if flag != 0 {
+                    for i in 0..<len {
+                        self.putkey( self.readByte( saddr + i ) )
+                    }
+                    self.resetRuntimeState()
+                    self.errorFlag = true
+                }
+            }
+        }
+
+        // ACCEPT ( c-addr +n1 -- +n2 )
+        // Consume up to n1 chars from inputQueue (or until nl), store at c-addr, return count.
+        // Basic version for this engine (line-oriented input).
+        _ = register("ACCEPT") {
+            let n1 = Int(self.pop())
+            let caddr = Int(self.pop())
+            var count = 0
+            while count < n1 && !self.inputQueue.isEmpty {
+                let b = self.inputQueue.removeFirst()
+                if b == 10 || b == 13 { break }
+                self.writeByte(caddr + count, b)
+                count += 1
+            }
+            self.push(Cell(count))
+        }
+
+        // ENVIRONMENT? ( c-addr u -- false | i*x true )
+        // For this minimal impl, always return false (0).
+        _ = register("ENVIRONMENT?") {
+            let u = Int(self.pop())
+            let caddr = Int(self.pop())
+            // consume the query string (we don't support any yet)
+            for _ in 0..<u { /* ignore */ }
+            self.push(0)
+        }
+
+        // S"  immediate — like ." but leaves ( c-addr u ) on the stack instead of printing.
+        // Uses same parser. In interpret: push char-addr u (first char addr, length).
+        // In compile: compile (S") + inline counted string (so at runtime it pushes the addr u of the literal string data).
+        _ = register("S\"", immediate: true) {
+            let caddr = self.parseToWordBuffer(using: 34)
+            if !self.inputQueue.isEmpty && self.inputQueue.first == 34 {
+                _ = self.inputQueue.removeFirst()
+            }
+            var len = Int( self.readByte( Int(caddr) ) )
+            var saddr = Int(caddr) + 1
+            if len > 0 && self.readByte(saddr) <= 32 {
+                saddr += 1
+                len -= 1
+            }
+            if self.readCell(self.STATE) != 0 {
+                self.push(self.sQuoteID); self.comma()
+                self.writeByteHere(UInt8(len))
+                for i in 0..<len {
+                    self.writeByteHere( self.readByte(saddr + i) )
+                }
+                self.alignHere()
+            } else {
+                self.push( Cell(saddr) )
+                self.push( Cell(len) )
             }
         }
 
@@ -2932,6 +3445,9 @@ public final class TZForth {
         self.inSlashSlashComment = false
         self.sourceLoadStop = false
         self.loadNesting = 0
+        // pictured state
+        self.pnoPtr = self.pnoBufferAddr + self.PNO_BUFFER_SIZE
+        writeCell(IN, 0)
     }
 
     public func resetToSafeState() {
@@ -2967,6 +3483,7 @@ public final class TZForth {
         loopControlStack.removeAll()
         self.inSlashSlashComment = false
         self.sourceLoadStop = false
+        self.pnoPtr = self.pnoBufferAddr + self.PNO_BUFFER_SIZE
 
         let wasLoading = self.loadNesting > 0
         // Do not zero loadNesting here; the loadFileContents defer (or its error path) will
@@ -3019,6 +3536,7 @@ public final class TZForth {
         }
         let b = readCell(BASE)
         if b < 2 || b > 36 { writeCell(BASE, 10) }
+        writeCell(IN, 0)
 
         ip = 0
         commandAddress = 0
@@ -3073,6 +3591,8 @@ public final class TZForth {
         if b < 2 || b > 36 {
             writeCell(BASE, 10)
         }
+        pnoPtr = pnoBufferAddr + PNO_BUFFER_SIZE
+        writeCell(IN, 0)
     }
 
     public var stackAsString: String {
@@ -3112,7 +3632,7 @@ public final class TZForth {
     // ANS-VALIDATE.txt next to the test source (in the dev folder of TestTZForth.swift).
     // The test logic and sources originated in the standalone tester; we respect the lbForth model origins internally.
 
-    private let testBlockSrc = """
+    internal let testBlockSrc = """
 \\ normal line comment
 : load1 11 ;
 \\\\ block comment start (spans lines)
@@ -3122,7 +3642,7 @@ spanning line without closer yet
 : load2 44 ;
 """
 
-    private let testStopSrc = """
+    internal let testStopSrc = """
 : pre 55 ;
 : pre2 77 ;
 \\\\ block comment protects the \\S below from stopping the load
@@ -3133,14 +3653,14 @@ spanning line without closer yet
 : post 66 ;
 """
 
-    private let testEchoSrc = """
+    internal let testEchoSrc = """
 FILE-ECHO ON
 : echopre 42 ;
 \\S
 : echopost 99 ;
 """
 
-    private let testDebugSrc = """
+    internal let testDebugSrc = """
 DEBUG-ON
 : dbg1 123 ;
 DEBUG-OFF
@@ -3148,7 +3668,7 @@ DEBUG-OFF
 : dbg3 789 ;
 """
 
-    private let testDotqSrc = """
+    internal let testDotqSrc = """
 : hello ." Hello from dot quote" ;
 hello
 .(  -- above should have printed without leading space )
@@ -3156,383 +3676,4 @@ hello
 : afterbad 999 ;
 """
 
-    public func runANSValidation() -> String {
-        // Snapshot the "current" dir at start (the folder of the test .swift as user set via CHDIR or launch).
-        // Internal tests may temporarily change logicalCurrentDirectory for fload sims; we use the
-        // snapshot for the output file location so it always lands "in the same folder where the
-        // current test .swift file is located".
-        let originalLogical = self.logicalCurrentDirectory
-        let originalCwd = FileManager.default.currentDirectoryPath
-
-        var results = "=== ANS-VALIDATE: 2012 ANS Forth Core + Core Ext validation (from TestTZForth / original TestLBForth FTEST logic) ===\n\n"
-        var collected = ""
-
-        let originalOnOutput = self.onOutput
-        self.onOutput = { text in
-            collected += text
-        }
-
-        func resetTest() {
-            self.resetRuntimeState()
-            collected = ""
-        }
-
-        let fm = FileManager.default
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-        let suffix = UUID().uuidString.prefix(8)
-        let fblock = tmp.appendingPathComponent("ansval_block_\(suffix).fth")
-        let fstop = tmp.appendingPathComponent("ansval_stop_\(suffix).fth")
-        let fecho = tmp.appendingPathComponent("ansval_echo_\(suffix).fth")
-        let fdebug = tmp.appendingPathComponent("ansval_debug_\(suffix).fth")
-        let fdotq = tmp.appendingPathComponent("ansval_dotq_\(suffix).fth")
-
-        do {
-            try self.testBlockSrc.write(to: fblock, atomically: true, encoding: .utf8)
-            try self.testStopSrc.write(to: fstop, atomically: true, encoding: .utf8)
-            try self.testEchoSrc.write(to: fecho, atomically: true, encoding: .utf8)
-            try self.testDebugSrc.write(to: fdebug, atomically: true, encoding: .utf8)
-            try self.testDotqSrc.write(to: fdotq, atomically: true, encoding: .utf8)
-        } catch {
-            results += "TEST write fail: \(error)\n"
-            self.onOutput = originalOnOutput
-            return results
-        }
-
-        // === Test 1: block comments during FLOAD ===
-        resetTest()
-        self.loadFile(fblock)
-        let hasLoad1 = self.debugFind("LOAD1")
-        let hasNo1 = self.debugFind("NOSKIP1")
-        let hasAfter1 = self.debugFind("AFTER1")
-        let hasLoad2 = self.debugFind("LOAD2")
-        results += "TEST1 block: load1=\(hasLoad1) noskip1=\(hasNo1) after1=\(hasAfter1) load2=\(hasLoad2)\n"
-
-        resetTest()
-        self.feedLine("load1 .")
-        let saw11 = collected.contains("11")
-        results += "TEST1 exec load1: saw11=\(saw11) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        resetTest()
-        self.feedLine("after1 .")
-        let saw33 = collected.contains("33")
-        results += "TEST1 exec after1: saw33=\(saw33) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Test 2: \S stops load ===
-        resetTest()
-        self.loadFile(fstop)
-        let hasPre = self.debugFind("PRE")
-        let hasPost = self.debugFind("POST")
-        let hasPre2 = self.debugFind("PRE2")
-        let hasIgn = self.debugFind("IGNORED")
-        let hasPost2 = self.debugFind("POST2")
-        results += "TEST2 stop: pre=\(hasPre) pre2=\(hasPre2) ign=\(hasIgn) post2=\(hasPost2) post=\(hasPost)\n"
-
-        // === Test 2b: FILE-ECHO + \S ===
-        resetTest()
-        _ = fm.changeCurrentDirectoryPath(tmp.path)
-        self.logicalCurrentDirectory = tmp.path
-        self.feedLine("fload \(fecho.lastPathComponent)")
-        if let u = self.pendingLoadURL {
-            let p = u.deletingLastPathComponent()
-            _ = fm.changeCurrentDirectoryPath(p.path)
-            self.logicalCurrentDirectory = p.path
-            self.pendingLoadURL = nil
-            self.loadFile(u)
-        }
-        let hasEchoPre = self.debugFind("ECHOPRE")
-        let hasEchoPost = self.debugFind("ECHOPOST")
-        results += "TEST2b echo+slash: echopre=\(hasEchoPre) echopost=\(hasEchoPost)\n"
-        let sawEchoSrc = collected.contains("FILE-ECHO ON") || collected.contains("echopre")
-        let sawPostSrc = collected.contains("echopost")
-        results += "TEST2b echo output: saw pre-src=\(sawEchoSrc) saw post-src=\(sawPostSrc)\n"
-
-        resetTest()
-        self.feedLine("123 constant postslashok")
-        let hasPostSlash = self.debugFind("POSTSLASHOK")
-        results += "TEST2b post-slash repl: postslashok=\(hasPostSlash)\n"
-        collected = ""
-        self.feedLine("postslashok .")
-        let saw123 = collected.contains("123")
-        results += "TEST2b post-slash exec: saw123=\(saw123) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Test 2c: DEBUG-ON/OFF in file ===
-        resetTest()
-        self.feedLine("FILE-ECHO OFF")
-        collected = ""
-        _ = fm.changeCurrentDirectoryPath(tmp.path)
-        self.logicalCurrentDirectory = tmp.path
-        self.feedLine("fload \(fdebug.lastPathComponent)")
-        if let u = self.pendingLoadURL {
-            let p = u.deletingLastPathComponent()
-            _ = fm.changeCurrentDirectoryPath(p.path)
-            self.logicalCurrentDirectory = p.path
-            self.pendingLoadURL = nil
-            self.loadFile(u)
-        }
-        let hasDbg1 = self.debugFind("DBG1")
-        let hasDbg2 = self.debugFind("DBG2")
-        let hasDbg3 = self.debugFind("DBG3")
-        results += "TEST2c debug: dbg1=\(hasDbg1) dbg2=\(hasDbg2) dbg3=\(hasDbg3)\n"
-        let sawDbgOn = collected.contains("[DEBUG]")
-        results += "TEST2c debug output: saw any [DEBUG]=\(sawDbgOn)\n"
-        resetTest()
-        collected = ""
-        self.feedLine("1 2 + .")
-        let sawDbgInRepl = collected.contains("[DEBUG]")
-        results += "TEST2c post-debug repl: sawDbgInRepl=\(sawDbgInRepl) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Test 2d: ."
-        resetTest()
-        _ = fm.changeCurrentDirectoryPath(tmp.path)
-        self.logicalCurrentDirectory = tmp.path
-        self.feedLine("fload \(fdotq.lastPathComponent)")
-        if let u = self.pendingLoadURL {
-            let p = u.deletingLastPathComponent()
-            _ = fm.changeCurrentDirectoryPath(p.path)
-            self.logicalCurrentDirectory = p.path
-            self.pendingLoadURL = nil
-            self.loadFile(u)
-        }
-        let hasHello = self.debugFind("HELLO")
-        let hasAfterBad = self.debugFind("AFTERBAD")
-        results += "TEST2d dotq: hello=\(hasHello) afterbad=\(hasAfterBad)\n"
-        let sawHelloOut = collected.contains("Hello from dot quote")
-        results += "TEST2d dotq output: saw hello text=\(sawHelloOut)\n"
-        resetTest()
-        collected = ""
-        self.feedLine("42 .")
-        let saw42 = collected.contains("42")
-        let stillCompiling = collected.contains("state=compiling")
-        results += "TEST2d post-err repl: saw42=\(saw42) stillCompiling=\(stillCompiling) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Test 2e: WORD
-        resetTest()
-        collected = ""
-        self.feedLine("32 WORD TEST COUNT TYPE")
-        let sawTest = collected.contains("TEST")
-        results += "TEST2e WORD: sawTest=\(sawTest) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Test 2f: STATE
-        resetTest()
-        self.feedLine("DEBUG-ON")
-        collected = ""
-        self.feedLine(": state-test 123")
-        let sawCompilingDuringDef = collected.contains("state=compiling")
-        results += "TEST2f after open : line (no ;): sawCompilingDuringDef=\(sawCompilingDuringDef)\n"
-        collected = ""
-        self.feedLine(";")
-        let sawInterpretingAfterClose = collected.contains("state=interpreting")
-        results += "TEST2f after ; : sawInterpretingAfterClose=\(sawInterpretingAfterClose)\n"
-        collected = ""
-        self.feedLine("state-test .")
-        let sawInterpretingExec = collected.contains("state=interpreting")
-        results += "TEST2f after exec: sawInterpretingExec=\(sawInterpretingExec) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-        resetTest()
-        self.feedLine("DEBUG-ON")
-        collected = ""
-        self.feedLine(": state-test2 [ 42 ]")
-        collected = ""
-        self.feedLine(";")
-        let sawFinalInterp = collected.contains("state=interpreting")
-        let sawStuckCompile = collected.contains("state=compiling")
-        results += "TEST2f after ; for [ test: sawFinalInterp=\(sawFinalInterp) sawStuckCompile=\(sawStuckCompile)\n"
-
-        // === Test 3: console block
-        resetTest()
-        self.feedLine("\\\\ console block start")
-        self.feedLine(": noskipc 123 ;")
-        self.feedLine("42 constant noskipc2")
-        self.feedLine(" { : afterc 456 ;  99 constant afterc2 ")
-        let hasNoC = self.debugFind("NOSKIPC")
-        let hasNoC2 = self.debugFind("NOSKIPC2")
-        let hasAfterC = self.debugFind("AFTERC")
-        let hasAfterC2 = self.debugFind("AFTERC2")
-        results += "TEST3 console-block: noskipc=\(hasNoC) noskipc2=\(hasNoC2) afterc=\(hasAfterC) afterc2=\(hasAfterC2)\n"
-
-        resetTest()
-        self.feedLine("afterc .")
-        let saw456 = collected.contains("456")
-        results += "TEST3 exec afterc: saw456=\(saw456)\n"
-
-        // === Test 4: console \S
-        resetTest()
-        self.feedLine("\\S : stillc 789 ;  7 constant stillc2")
-        let hasStillC = self.debugFind("STILLC")
-        let hasStillC2 = self.debugFind("STILLC2")
-        results += "TEST4 console-s: stillc=\(hasStillC) stillc2=\(hasStillC2)\n"
-
-        // === Test 5: nested
-        resetTest()
-        self.feedLine(": square dup * ;")
-        self.feedLine(": cube dup square * ;")
-        self.feedLine("3 square .")
-        let saw9 = collected.contains("9")
-        collected = ""
-        self.feedLine("4 cube .")
-        let saw64 = collected.contains("64")
-        let stillNoOverflow = !collected.contains("overflow")
-        results += "TEST5 nested: square9=\(saw9) cube64=\(saw64) no-overflow=\(stillNoOverflow)\n"
-
-        collected = ""
-        self.feedLine(": squar dup * ;")
-        self.feedLine("3 squar .")
-        let saw9b = collected.contains("9")
-        results += "TEST5 post: squar9=\(saw9b)\n"
-
-        // Test STATE addr
-        resetTest()
-        collected = ""
-        self.feedLine("STATE")
-        self.feedLine("DEBUG-ON")
-        collected = ""
-        self.feedLine("STATE 16 = .")
-        let stateReturnsAddr = collected.contains(" -1") || collected.contains("-1")
-        results += "TEST state-word: STATE 16 = => \(stateReturnsAddr)\n"
-        collected = ""
-        self.feedLine("STATE @ .")
-        let stateFetch = collected.contains("0 ")
-        results += "TEST STATE @: STATE @ . => \(stateFetch) out=\(collected.trimmingCharacters(in: .whitespacesAndNewlines))\n"
-
-        // === Expanded ANS 2012 Core + Core Ext spot checks (full port) ===
-        // This is the rich TEST6 block from the original TestLBForth.swift FTEST harness (now in TestTZForth.swift).
-        // ~60 individual tests exercising documented 2012 ANS stack effects + behaviors
-        // for arithmetic, logic, compares, stacks, rstack, memory, consts, I/O, control,
-        // dict words, etc. Each produces a "TEST6 foo: pass" or detailed FAIL line.
-        // These (plus the earlier TEST1..5 + state tests) are accumulated into the log
-        // written to ANS-VALIDATE.txt. We turn debug off first so the collected outputs
-        // for the checks are clean (no [DEBUG] spam mixed into the .txt log).
-        resetTest()
-        self.feedLine("DEBUG-OFF")
-        collected = ""
-        results += "=== Starting expanded ANS 2012 Core word tests ===\n"
-        self.feedLine("VARIABLE t6mem")   // safe cell for memory tests (won't corrupt DP_ADDR)
-        var ansPassed = 0
-        var ansTotal = 0
-        func ansTest(_ desc: String, _ line: String, _ expectedSubstring: String) {
-            resetTest()
-            self.feedLine(line)
-            ansTotal += 1
-            let out = collected.trimmingCharacters(in: .whitespacesAndNewlines)
-            if out.contains(expectedSubstring) {
-                ansPassed += 1
-                results += "TEST6 \(desc): pass\n"
-            } else {
-                results += "TEST6 \(desc): FAIL got '\(out)' (expected contain '\(expectedSubstring)')\n"
-            }
-        }
-
-        // Arithmetic (6.1.0120 + etc.)
-        ansTest("+", "3 4 + .", "7")
-        ansTest("-", "10 3 - .", "7")
-        ansTest("*", "6 7 * .", "42")
-        ansTest("/MOD", "10 3 /MOD . .", "3 1")  // quot rem (top=quot per impl+standard)
-        ansTest("MOD", "10 3 MOD .", "1")
-        ansTest("1+", "41 1+ .", "42")
-        ansTest("1-", "43 1- .", "42")
-        ansTest("ABS", "-5 ABS .", "5")
-        ansTest("NEGATE", "5 NEGATE .", "-5")
-        ansTest("MIN", "3 7 MIN .", "3")
-        ansTest("MAX", "3 7 MAX .", "7")
-
-        // Logic & shifts (6.1.0720 etc.)
-        ansTest("AND", "5 3 AND .", "1")
-        ansTest("OR", "5 3 OR .", "7")
-        ansTest("XOR", "5 3 XOR .", "6")
-        ansTest("INVERT", "0 INVERT .", "-1")  // all bits (in 2's complement sense for cell)
-        ansTest("LSHIFT", "1 3 LSHIFT .", "8")
-        ansTest("RSHIFT", "8 2 RSHIFT .", "2")
-
-        // Comparisons (6.1.0270 etc.)
-        ansTest("=", "5 5 = .", "-1")
-        ansTest("=", "5 6 = .", "0")
-        ansTest("<", "3 5 < .", "-1")
-        ansTest(">", "5 3 > .", "-1")
-        ansTest("0=", "0 0= .", "-1")
-        ansTest("0=", "1 0= .", "0")
-        ansTest("0<", "-1 0< .", "-1")
-        ansTest("0>", "1 0> .", "-1")
-        ansTest("WITHIN", "5 1 10 WITHIN .", "-1")
-        ansTest("WITHIN", "0 1 10 WITHIN .", "0")
-
-        // Stack manip (6.1.0630 etc. + extensions)
-        ansTest("DUP", "42 DUP . .", "42 42")
-        ansTest("DROP", "1 2 DROP .", "1")
-        ansTest("SWAP", "1 2 SWAP . .", "1 2")
-        ansTest("OVER", "1 2 OVER . . .", "1 2 1")
-        ansTest("?DUP", "0 ?DUP .", "0")
-        ansTest("?DUP", "5 ?DUP . .", "5 5")
-        ansTest("ROT", "1 2 3 ROT . . .", "1 3 2")
-        ansTest("NIP", "1 2 NIP .", "2")
-        ansTest("TUCK", "1 2 TUCK . . .", "2 1 2")
-        ansTest("PICK", "10 20 30 1 PICK .", "20")  // 0=top, 1=next
-        ansTest("ROLL", "10 20 30 1 ROLL . . .", "20 30 10")
-
-        // Return stack (6.1.0580 etc.)
-        ansTest(">R R>", "42 >R R> .", "42")
-        ansTest("R@", "99 >R R@ R> DROP .", "99")
-        ansTest("2>R 2R>", "1 2 2>R 2R> . .", "2 1")
-
-        // Memory (6.1.0650 etc.)
-        // Use t6mem (defined early) to avoid corrupting the live DP_ADDR / HERE value
-        ansTest("! @", "123 t6mem ! t6mem @ .", "123")
-        ansTest("C! C@", "65 t6mem C! t6mem C@ .", "65")
-        ansTest(",", "42 , 43 .", "43")
-        // ALLOT tested indirectly via , behavior
-
-        // Constants / literals / base
-        ansTest("TRUE", "TRUE .", "-1")
-        ansTest("FALSE", "FALSE .", "0")
-        ansTest("BL", "BL .", "32")
-        ansTest("HEX DECIMAL", "HEX 10 . DECIMAL 16 .", "10 16")
-        ansTest("BASE", "10 BASE ! 42 .", "42")
-
-        // I/O basics (already some coverage, add U. SPACES)
-        ansTest("U.", "123 U.", "123")
-        ansTest("SPACES", "3 SPACES 42 .", "42")  // hard to count spaces but no crash + output
-
-        // Control structures (via temp definitions; some coverage in 2d/2f)
-        ansTest("IF ELSE THEN", ": t6if 5 0= IF 99 ELSE 88 THEN ; t6if .", "88")
-        ansTest("BEGIN UNTIL", ": t6until 0 BEGIN 1+ DUP 3 > UNTIL ; t6until .", "4")
-        ansTest("DO LOOP I", ": t6do 0 3 0 DO I + LOOP ; t6do .", "3")  // 0+1+2
-        ansTest("?DO +LOOP UNLOOP LEAVE", ": t6dop 0 5 0 ?DO 1+ LOOP ; t6dop .", "5")
-
-        // Dictionary / introspection (current words)
-        ansTest(">HEADER >NFA ID.", "VARIABLE t6v ' t6v >NFA COUNT TYPE", "t6v")  // name printed
-        ansTest("ID.", "' t6v ID.", "t6v")
-        ansTest("HERE (value) DP", "HERE DP @ = .", "-1")  // they should match per current impl
-        ansTest("LATEST", "LATEST @ 0= 0= .", "-1")  // at least non-zero after bootstrap
-        ansTest("DEPTH", "1 2 3 DEPTH .", "3")
-
-        // TYPE COUNT WORD (more coverage)
-        ansTest("COUNT TYPE via WORD", "32 WORD HELLO COUNT TYPE", "HELLO")
-
-        // 2@ 2! etc. (use safe non-HERE to avoid prior side effects on DP)
-        ansTest("ARSHIFT", "-8 1 ARSHIFT .", "-4")
-
-        // Check a few more that should be present and not crash
-        ansTest("CLS (no crash)", "CLS 42 .", "42")
-        ansTest("SPACES (no crash)", "2 SPACES 99 .", "99")
-
-        results += "TEST6 ANS core summary: \(ansPassed)/\(ansTotal) passed\n"
-        if ansPassed != ansTotal {
-            results += "WARNING: some ANS 2012 core tests failed — review against standard stack effects.\n"
-        }
-
-        // cleanup temps
-        try? fm.removeItem(at: fblock)
-        try? fm.removeItem(at: fstop)
-        try? fm.removeItem(at: fecho)
-        try? fm.removeItem(at: fdebug)
-        try? fm.removeItem(at: fdotq)
-
-        // Restore original dir state (logical + fm cwd) so caller is not affected by the
-        // temporary chdir/logical changes the internal fload simulations perform.
-        self.logicalCurrentDirectory = originalLogical
-        _ = FileManager.default.changeCurrentDirectoryPath(originalCwd)
-
-        self.onOutput = originalOnOutput
-
-        results += "\n=== ANS-VALIDATE complete ===\n"
-        return results
-    }
 }
